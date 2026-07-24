@@ -1,0 +1,31 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+
+export async function GET(request: Request) {
+  const { searchParams, origin } = new URL(request.url);
+  const code = searchParams.get("code");
+  const next = searchParams.get("next") ?? "/organizador";
+
+  console.log("[Callback] Llegó - code:", code ? "presente" : "ausente", Date.now());
+
+  if (code) {
+    const supabase = await createClient();
+    console.log("[Callback] Cliente creado, exchangeCodeForSession...", Date.now());
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
+    if (!error) {
+      console.log("[Callback] exchange OK, redirigiendo a", next, Date.now());
+      const forwardedHost = request.headers.get("x-forwarded-host");
+      const isLocalEnv = process.env.NODE_ENV === "development";
+      if (isLocalEnv) {
+        return NextResponse.redirect(`${origin}${next}`);
+      }
+      if (forwardedHost) {
+        return NextResponse.redirect(`https://${forwardedHost}${next}`);
+      }
+      return NextResponse.redirect(`${origin}${next}`);
+    }
+    console.error("[Callback] Error exchangeCodeForSession:", error.message);
+  }
+
+  return NextResponse.redirect(`${origin}/?error=auth_failed`);
+}

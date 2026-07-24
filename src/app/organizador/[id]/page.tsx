@@ -1,0 +1,403 @@
+"use client";
+
+import { useEffect, useState, useCallback, useRef } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
+import type { Partido, Jugador, Pago } from "@/lib/db/types";
+
+export const dynamic = "force-dynamic";
+
+interface JugadorConPago extends Jugador {
+  pago: Pago | null;
+}
+
+export default function PartidoDetailPage() {
+  console.log("[PartidoDetail] Render - id:", useParams<{ id: string }>().id);
+  const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
+  const getSupabase = () => {
+    if (!supabaseRef.current) supabaseRef.current = createClient();
+    return supabaseRef.current;
+  };
+
+  const [partido, setPartido] = useState<Partido | null>(null);
+  const [jugadores, setJugadores] = useState<JugadorConPago[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isOwner, setIsOwner] = useState(false);
+  const [linkCopiado, setLinkCopiado] = useState(false);
+
+  const cargarDatos = useCallback(async () => {
+    console.log("[PartidoDetail] cargarDatos - inicio", Date.now());
+    try {
+      const supabase = getSupabase();
+      console.log("[PartidoDetail] getUser...", Date.now());
+      const result = await supabase.auth.getUser();
+      const user = result.data.user;
+      console.log("[PartidoDetail] getUser OK - user:", !!user, Date.now());
+      if (!user) {
+        router.replace("/auth/login");
+        return;
+      }
+
+      const { data: p } = await supabase
+        .from("partidos")
+        .select("*")
+        .eq("id", id)
+        .single();
+
+      if (!p || p.organizador_id !== user.id) {
+        router.replace("/organizador");
+        return;
+      }
+
+      setPartido(p as Partido);
+      setIsOwner(true);
+
+      console.log("[PartidoDetail] Cargando jugadores...", Date.now());
+      const { data: jugs } = await supabase
+        .from("jugadores")
+        .select("*, pago:pagos(*)")
+        .eq("partido_id", id)
+        .order("orden_ingreso", { ascending: true });
+
+      if (jugs) setJugadores(jugs as unknown as JugadorConPago[]);
+      else setJugadores([]);
+
+      console.log("[PartidoDetail] Datos cargados OK", Date.now());
+      setLoading(false);
+    } catch (e) {
+      console.log("[PartidoDetail] ERROR:", e, Date.now());
+      router.replace("/auth/login");
+    }
+  }, [id, router]);
+
+  useEffect(() => { cargarDatos(); }, [cargarDatos]);
+
+  const copiarLink = () => {
+    if (!partido) return;
+    const link = `${window.location.origin}/unirse/${partido.link_slug}`;
+    navigator.clipboard.writeText(link);
+    setLinkCopiado(true);
+    setTimeout(() => setLinkCopiado(false), 2000);
+  };
+
+  const confirmarPago = async (jugadorId: string) => {
+    const supabase = getSupabase();
+    const result = await supabase.auth.getUser();
+    const user = result.data.user;
+    if (!user) return;
+    const { error } = await supabase
+      .from("pagos")
+      .update({ estado: "confirmado", confirmado_por: user.id })
+      .eq("jugador_id", jugadorId);
+    if (error) console.error(error);
+    else cargarDatos();
+  };
+
+  const rechazarPago = async (jugadorId: string) => {
+    const supabase = getSupabase();
+    const { error } = await supabase
+      .from("pagos")
+      .update({ estado: "rechazado", comprobante_url: null })
+      .eq("jugador_id", jugadorId);
+    if (error) console.error(error);
+    else cargarDatos();
+  };
+
+  const cerrarPartido = async () => {
+    const supabase = getSupabase();
+    const { error } = await supabase
+      .from("partidos")
+      .update({ estado: "cerrado" })
+      .eq("id", id);
+    if (error) console.error(error);
+    else cargarDatos();
+  };
+
+  const reabrirPartido = async () => {
+    const supabase = getSupabase();
+    const { error } = await supabase
+      .from("partidos")
+      .update({ estado: "abierto" })
+      .eq("id", id);
+    if (error) console.error(error);
+    else cargarDatos();
+  };
+
+  const eliminarJugador = async (jugadorId: string) => {
+    if (!confirm("¿Eliminar este jugador del partido?")) return;
+    const supabase = getSupabase();
+    const { error } = await supabase
+      .from("jugadores")
+      .delete()
+      .eq("id", jugadorId);
+    if (error) {
+      alert("Error al eliminar: " + error.message);
+    } else {
+      cargarDatos();
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin text-4xl">⚽</div>
+      </div>
+    );
+  }
+
+  if (!partido) return null;
+
+  const titulares = jugadores.filter((j) => j.rol === "titular");
+  const suplentes = jugadores.filter((j) => j.rol === "suplente");
+  const confirmados = jugadores.filter(
+    (j) => j.pago?.estado === "confirmado"
+  );
+  const pendientes = jugadores.filter(
+    (j) => j.pago?.estado === "pendiente_confirmacion"
+  );
+  const montoPorJugador =
+    titulares.length > 0
+      ? (partido.costo_total / titulares.length).toFixed(2)
+      : "0";
+  const totalRecaudado = confirmados.reduce(
+    (acc, j) => acc + (j.pago?.monto_esperado ?? 0),
+    0
+  );
+
+  return (
+    <div className="min-h-screen px-4 py-6 max-w-lg mx-auto">
+      <button
+        onClick={() => router.push("/organizador")}
+        className="text-[var(--texto)]/60 text-sm mb-4 hover:text-[var(--texto)] transition-colors"
+      >
+        ← Mis partidos
+      </button>
+
+      <div className="bg-[var(--superficie)] rounded-xl p-4 mb-6">
+        <div className="flex items-center justify-between mb-2">
+          <h1 className="text-xl font-bold text-[var(--primario)]">
+            {new Date(partido.fecha_hora).toLocaleDateString("es-AR", {
+              weekday: "long",
+              day: "numeric",
+              month: "long",
+            })}
+          </h1>
+          <span
+            className={`text-sm font-medium px-2 py-1 rounded-full ${
+              partido.estado === "abierto"
+                ? "bg-[var(--primario)]/20 text-[var(--primario)]"
+                : partido.estado === "completo"
+                ? "bg-blue-500/20 text-blue-400"
+                : "bg-[var(--inactivo)]/20 text-[var(--inactivo)]"
+            }`}
+          >
+            {partido.estado}
+          </span>
+        </div>
+        <p className="text-[var(--texto)]/70 text-sm">
+          {new Date(partido.fecha_hora).toLocaleTimeString("es-AR", {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}{" "}
+          · {partido.cantidad_jugadores / 2} vs{" "}
+          {partido.cantidad_jugadores / 2} · ${partido.costo_total.toFixed(2)}
+        </p>
+      </div>
+
+      <button
+        onClick={copiarLink}
+        className="w-full bg-[var(--superficie)] text-[var(--primario)] font-medium py-3 px-4 rounded-xl hover:brightness-110 transition-all mb-6 flex items-center justify-center gap-2"
+      >
+        {linkCopiado ? "✓ Link copiado" : "🔗 Copiar link de invitación"}
+      </button>
+
+      <div className="flex gap-2 mb-6">
+        {partido.estado !== "cerrado" && (
+          <button
+            onClick={cerrarPartido}
+            className="flex-1 bg-red-500/10 text-red-400 py-2 rounded-xl text-sm hover:bg-red-500/20 transition-colors"
+          >
+            Cerrar partido
+          </button>
+        )}
+        {partido.estado === "cerrado" && (
+          <button
+            onClick={reabrirPartido}
+            className="flex-1 bg-[var(--primario)]/10 text-[var(--primario)] py-2 rounded-xl text-sm hover:brightness-110 transition-colors"
+          >
+            Reabrir partido
+          </button>
+        )}
+      </div>
+
+      <div className="bg-[var(--superficie)] rounded-xl p-4 mb-6">
+        <h2 className="text-sm font-semibold text-[var(--texto)]/70 mb-3 uppercase tracking-wider">
+          Resumen de pagos
+        </h2>
+        <div className="grid grid-cols-3 gap-3 text-center">
+          <div>
+            <p className="text-2xl font-bold text-[var(--confirmado)]">
+              {confirmados.length}
+            </p>
+            <p className="text-xs text-[var(--texto)]/50">Pagaron</p>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-[var(--pendiente)]">
+              {pendientes.length}
+            </p>
+            <p className="text-xs text-[var(--texto)]/50">Pendientes</p>
+          </div>
+          <div>
+            <p className="text-2xl font-bold text-[var(--texto)]">
+              ${totalRecaudado.toFixed(0)}
+            </p>
+            <p className="text-xs text-[var(--texto)]/50">
+              de ${partido.costo_total.toFixed(0)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-6">
+        <h2 className="text-sm font-semibold text-[var(--texto)]/70 mb-3 uppercase tracking-wider">
+          Titulares (${montoPorJugador} c/u)
+        </h2>
+        <div className="space-y-2">
+          {titulares.length === 0 && (
+            <p className="text-[var(--texto)]/40 text-sm text-center py-4">
+              Sin titulares todavía
+            </p>
+          )}
+          {titulares.map((j) => (
+            <JugadorCard
+              key={j.id}
+              jugador={j}
+              onConfirmar={confirmarPago}
+              onRechazar={rechazarPago}
+              onEliminar={eliminarJugador}
+              esOrganizador={isOwner}
+            />
+          ))}
+        </div>
+      </div>
+
+      {suplentes.length > 0 && (
+        <div className="mb-6">
+          <h2 className="text-sm font-semibold text-[var(--texto)]/70 mb-3 uppercase tracking-wider">
+            Suplentes ({suplentes.length})
+          </h2>
+          <div className="space-y-2">
+            {suplentes.map((j) => (
+              <JugadorCard
+                key={j.id}
+                jugador={j}
+                onConfirmar={confirmarPago}
+                onRechazar={rechazarPago}
+                onEliminar={eliminarJugador}
+                esOrganizador={isOwner}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="text-center text-[var(--texto)]/30 text-xs py-4">
+        {jugadores.length} jugadores unidos ·{" "}
+        {partido.cantidad_jugadores - titulares.length} cupos titulares libres
+      </div>
+    </div>
+  );
+}
+
+function JugadorCard({
+  jugador,
+  onConfirmar,
+  onRechazar,
+  onEliminar,
+  esOrganizador,
+}: {
+  jugador: JugadorConPago;
+  onConfirmar: (id: string) => void;
+  onRechazar: (id: string) => void;
+  onEliminar: (id: string) => void;
+  esOrganizador: boolean;
+}) {
+  const estadoPago = jugador.pago?.estado ?? "sin_declarar";
+  const comprobanteUrl = jugador.pago?.comprobante_url;
+
+  return (
+    <div className="bg-[var(--superficie)] rounded-xl p-3 flex items-center justify-between">
+      <div className="flex items-center gap-3">
+        <div className="flex flex-col">
+          <div className="flex items-center gap-2">
+            {jugador.emoji_o_color && (
+              <span className="text-lg">{jugador.emoji_o_color}</span>
+            )}
+            <span className="font-medium">{jugador.nombre}</span>
+            {jugador.rol === "suplente" && (
+              <span className="text-xs bg-[var(--inactivo)]/20 text-[var(--inactivo)] px-1.5 py-0.5 rounded">
+                SUP
+              </span>
+            )}
+          </div>
+          {jugador.pago && (
+            <p className="text-xs text-[var(--texto)]/50">
+              ${jugador.pago.monto_esperado.toFixed(2)}
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2">
+        {comprobanteUrl && esOrganizador && (
+          <a
+            href={comprobanteUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[var(--primario)] text-sm hover:underline"
+          >
+            📎 Ver
+          </a>
+        )}
+
+        {estadoPago === "pendiente_confirmacion" && esOrganizador && (
+          <>
+            <button
+              onClick={() => onConfirmar(jugador.id)}
+              className="bg-[var(--confirmado)]/20 text-[var(--confirmado)] px-2 py-1 rounded-lg text-xs font-medium hover:brightness-110"
+            >
+              Confirmar
+            </button>
+            <button
+              onClick={() => onRechazar(jugador.id)}
+              className="bg-red-500/20 text-red-400 px-2 py-1 rounded-lg text-xs font-medium hover:brightness-110"
+            >
+              Rechazar
+            </button>
+          </>
+        )}
+
+        {estadoPago === "confirmado" && (
+          <span className="bg-[var(--confirmado)]/20 text-[var(--confirmado)] px-2 py-1 rounded-lg text-xs font-medium">
+            ✓ Pagó
+          </span>
+        )}
+
+        {estadoPago === "rechazado" && (
+          <span className="bg-red-500/20 text-red-400 px-2 py-1 rounded-lg text-xs font-medium">
+            Rechazado
+          </span>
+        )}
+
+        <button
+          onClick={() => onEliminar(jugador.id)}
+          className="text-[var(--texto)]/30 hover:text-red-400 text-sm ml-1 transition-colors"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
