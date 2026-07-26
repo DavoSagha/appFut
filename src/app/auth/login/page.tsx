@@ -2,23 +2,16 @@
 
 import { createClient } from "@/lib/supabase/client";
 
-export const dynamic = "force-dynamic";
-
 export default function LoginPage() {
-  console.log("[Login] Render - montó");
-
   const handleGoogleLogin = async () => {
-    console.log("[Login] Click en botón Google", Date.now());
     const supabase = createClient();
-    console.log("[Login] Llamando signInWithOAuth...", Date.now());
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
         redirectTo: `${window.location.origin}/auth/callback`,
       },
     });
-    if (error) console.error("[Login] Error signInWithOAuth:", error.message);
-    else console.log("[Login] signInWithOAuth OK - redirigiendo a Google", Date.now());
+    if (error) console.error("Error al iniciar sesión:", error.message);
   };
 
   return (

@@ -4,10 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-export const dynamic = "force-dynamic";
-
 export default function NuevoPartidoPage() {
-  console.log("[NuevoPartido] Render");
   const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -19,15 +16,14 @@ export default function NuevoPartidoPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    console.log("[NuevoPartido] useEffect - inicio", Date.now());
     const supabase = createClient();
-    supabase.auth.getUser().then((result) => {
-      const user = result.data.user;
-      console.log("[NuevoPartido] getUser OK - user:", !!user, Date.now());
-      if (!user) router.replace("/auth/login");
-      else setUserId(user.id);
-    }).catch((err) => {
-      console.log("[NuevoPartido] getUser ERROR:", err?.message || err, Date.now());
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
+        router.replace("/auth/login");
+        return;
+      }
+      setUserId(session.user.id);
+    }).catch(() => {
       router.replace("/auth/login");
     });
   }, [router]);
@@ -60,6 +56,14 @@ export default function NuevoPartidoPage() {
     setError("");
 
     const supabase = createClient();
+
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      setError("Sesión expirada. Volvé a iniciar sesión.");
+      setSubmitting(false);
+      return;
+    }
+
     const fechaHora = new Date(`${fecha}T${hora}`);
 
     const { data, error: err } = await supabase

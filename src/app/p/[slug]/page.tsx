@@ -10,8 +10,6 @@ import {
 } from "@/lib/device";
 import type { Partido, Jugador, Pago } from "@/lib/db/types";
 
-export const dynamic = "force-dynamic";
-
 interface JugadorConPago extends Jugador {
   pago: Pago | null;
 }
@@ -20,7 +18,6 @@ const EMOJIS = ["⚡", "🔥", "💪", "🦊", "🐺", "🦅", "🐂", "🐐", "
 
 export default function PlayerViewPage() {
   const { slug } = useParams<{ slug: string }>();
-  console.log("[PlayerView] Render - slug:", slug);
   const router = useRouter();
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   const getSupabase = () => {

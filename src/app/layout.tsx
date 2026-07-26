@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { ServiceWorkerRegister } from "./sw-register";
 
 export const metadata: Metadata = {
   title: "appFut - Organiza tus partidos",
@@ -28,29 +29,12 @@ export default function RootLayout({
   return (
     <html lang="es">
       <head>
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: 'console.log("[LAYOUT] JS loaded", Date.now());',
-          }}
-        />
+        <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+        <link rel="apple-touch-icon" href="/icon.svg" />
       </head>
       <body className="min-h-screen">
-        <div style={{ background: "red", color: "white", padding: 4, fontSize: 11 }}>
-          LAYOUT RENDER OK
-        </div>
+        <ServiceWorkerRegister />
         {children}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              if ('serviceWorker' in navigator) {
-                window.addEventListener('load', () => {
-                  navigator.serviceWorker.register('/sw.js');
-                });
-              }
-            `,
-          }}
-        />
       </body>
     </html>
   );

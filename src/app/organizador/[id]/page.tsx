@@ -5,14 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import type { Partido, Jugador, Pago } from "@/lib/db/types";
 
-export const dynamic = "force-dynamic";
-
 interface JugadorConPago extends Jugador {
   pago: Pago | null;
 }
 
 export default function PartidoDetailPage() {
-  console.log("[PartidoDetail] Render - id:", useParams<{ id: string }>().id);
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
@@ -28,17 +25,14 @@ export default function PartidoDetailPage() {
   const [linkCopiado, setLinkCopiado] = useState(false);
 
   const cargarDatos = useCallback(async () => {
-    console.log("[PartidoDetail] cargarDatos - inicio", Date.now());
     try {
       const supabase = getSupabase();
-      console.log("[PartidoDetail] getUser...", Date.now());
-      const result = await supabase.auth.getUser();
-      const user = result.data.user;
-      console.log("[PartidoDetail] getUser OK - user:", !!user, Date.now());
-      if (!user) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
         router.replace("/auth/login");
         return;
       }
+      const userId = session.user.id;
 
       const { data: p } = await supabase
         .from("partidos")
@@ -46,7 +40,7 @@ export default function PartidoDetailPage() {
         .eq("id", id)
         .single();
 
-      if (!p || p.organizador_id !== user.id) {
+      if (!p || p.organizador_id !== userId) {
         router.replace("/organizador");
         return;
       }
@@ -54,7 +48,6 @@ export default function PartidoDetailPage() {
       setPartido(p as Partido);
       setIsOwner(true);
 
-      console.log("[PartidoDetail] Cargando jugadores...", Date.now());
       const { data: jugs } = await supabase
         .from("jugadores")
         .select("*, pago:pagos(*)")
@@ -64,10 +57,8 @@ export default function PartidoDetailPage() {
       if (jugs) setJugadores(jugs as unknown as JugadorConPago[]);
       else setJugadores([]);
 
-      console.log("[PartidoDetail] Datos cargados OK", Date.now());
       setLoading(false);
-    } catch (e) {
-      console.log("[PartidoDetail] ERROR:", e, Date.now());
+    } catch {
       router.replace("/auth/login");
     }
   }, [id, router]);
@@ -84,9 +75,9 @@ export default function PartidoDetailPage() {
 
   const confirmarPago = async (jugadorId: string) => {
     const supabase = getSupabase();
-    const result = await supabase.auth.getUser();
-    const user = result.data.user;
-    if (!user) return;
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) return;
+    const user = session.user;
     const { error } = await supabase
       .from("pagos")
       .update({ estado: "confirmado", confirmado_por: user.id })

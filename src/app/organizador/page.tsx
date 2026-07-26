@@ -6,10 +6,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Partido } from "@/lib/db/types";
 
-export const dynamic = "force-dynamic";
-
 export default function OrganizadorDashboard() {
-  console.log("[Organizador] Render");
   const router = useRouter();
   const [loading, setLoading] = useState(true);
   const [partidos, setPartidos] = useState<Partido[]>([]);
@@ -17,13 +14,11 @@ export default function OrganizadorDashboard() {
 
   const cargarPartidos = useCallback(
     async (supabase: ReturnType<typeof createClient>, userId: string) => {
-      console.log("[Organizador] Cargando partidos para", userId, Date.now());
       const { data } = await supabase
         .from("partidos")
         .select("*")
         .eq("organizador_id", userId)
         .order("fecha_hora", { ascending: false });
-      console.log("[Organizador] Partidos cargados:", data?.length ?? 0, Date.now());
       if (data) setPartidos(data as Partido[]);
       setLoading(false);
     },
@@ -31,19 +26,15 @@ export default function OrganizadorDashboard() {
   );
 
   useEffect(() => {
-    console.log("[Organizador] useEffect - inicio", Date.now());
     const supabase = createClient();
-    supabase.auth.getUser().then((result) => {
-      const user = result.data.user;
-      console.log("[Organizador] getUser OK - user:", user?.email, Date.now());
-      if (!user) {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (!session) {
         router.replace("/auth/login");
         return;
       }
-      setUser({ id: user.id, email: user.email });
-      cargarPartidos(supabase, user.id);
-    }).catch((err) => {
-      console.log("[Organizador] getUser ERROR:", err?.message || err, Date.now());
+      setUser({ id: session.user.id, email: session.user.email });
+      cargarPartidos(supabase, session.user.id);
+    }).catch(() => {
       router.replace("/auth/login");
     });
   }, [router, cargarPartidos]);

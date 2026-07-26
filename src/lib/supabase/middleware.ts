@@ -2,7 +2,6 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 export async function updateSession(request: NextRequest) {
-  console.log("[Middleware] Path:", request.nextUrl.pathname, Date.now());
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
@@ -26,9 +25,11 @@ export async function updateSession(request: NextRequest) {
     }
   );
 
-  console.log("[Middleware] getUser...", Date.now());
-  await supabase.auth.getUser();
-  console.log("[Middleware] getUser OK", Date.now());
+  const pathname = request.nextUrl.pathname;
+
+  if (pathname.startsWith("/organizador") || pathname.startsWith("/auth/callback")) {
+    await supabase.auth.getUser();
+  }
 
   return supabaseResponse;
 }

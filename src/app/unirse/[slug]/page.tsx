@@ -6,13 +6,10 @@ import { createClient } from "@/lib/supabase/client";
 import { getSavedJugadorId, getOrCreateDeviceId, saveJugadorId } from "@/lib/device";
 import type { Partido, Jugador } from "@/lib/db/types";
 
-export const dynamic = "force-dynamic";
-
 type Paso = "cargando" | "nombre" | "seleccionar" | "redirigiendo";
 
 export default function UnirsePage() {
   const { slug } = useParams<{ slug: string }>();
-  console.log("[Unirse] Render - slug:", slug);
   const router = useRouter();
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   const getSupabase = () => {
