@@ -19,6 +19,53 @@ import {
 
 const BUCKET = "comprobantes";
 
+export async function declararPagoSinComprobante(slug: string) {
+  if (!esSlug(slug)) return fallo("Link inválido");
+
+  const usuario = await usuarioActual();
+  if (!usuario) return fallo("No estás anotado en este partido");
+
+  const supabase = await createClient();
+
+  const { data: rawPartido } = await supabase.rpc("partido_por_slug", {
+    p_slug: slug,
+  });
+
+  const p = (rawPartido as { id: string; estado: string }[] | null)?.[0];
+  if (!p) return fallo("Partido no encontrado");
+  if (p.estado === "cerrado") return fallo("El partido está cerrado");
+
+  const { data: jugador } = await supabase
+    .from("jugadores")
+    .select("id, rol")
+    .eq("partido_id", p.id)
+    .eq("user_id", usuario.id)
+    .single();
+
+  if (!jugador) return fallo("No estás anotado en este partido");
+  if (jugador.rol !== "titular") return fallo("Los suplentes no pagan");
+
+  const { data: pagoActual } = await supabase
+    .from("pagos")
+    .select("estado")
+    .eq("jugador_id", jugador.id)
+    .single();
+
+  if (pagoActual?.estado === "confirmado") {
+    return fallo("Tu pago ya está confirmado");
+  }
+
+  const { error } = await supabase
+    .from("pagos")
+    .update({ estado: "pendiente_confirmacion" })
+    .eq("jugador_id", jugador.id);
+
+  if (error) return falloDe("declararPago", error);
+
+  revalidatePath(`/p/${slug}`);
+  return { ok: true as const };
+}
+
 export async function subirComprobante(slug: string, formData: FormData) {
   if (!esSlug(slug)) return fallo("Link inválido");
 

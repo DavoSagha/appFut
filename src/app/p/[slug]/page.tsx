@@ -9,7 +9,10 @@ import {
   darseDeBaja,
   type VistaPartido,
 } from "@/app/actions/jugadores";
-import { subirComprobante } from "@/app/actions/pagos";
+import {
+  declararPagoSinComprobante,
+  subirComprobante,
+} from "@/app/actions/pagos";
 import { asegurarSesion } from "@/lib/supabase/ensure-session";
 import { EMOJIS } from "@/lib/constants";
 
@@ -22,6 +25,7 @@ export default function PlayerViewPage() {
   const [vista, setVista] = useState<VistaPartido | null>(null);
   const [error, setError] = useState("");
   const [subiendo, setSubiendo] = useState(false);
+  const [declarando, setDeclarando] = useState(false);
 
   const cargar = useCallback(async () => {
     const uid = await asegurarSesion();
@@ -81,6 +85,19 @@ export default function PlayerViewPage() {
       setError(res.error);
       return;
     }
+    await cargar();
+  };
+
+  const handleDeclararPago = async () => {
+    if (!confirm("¿Confirmás que ya pagaste en efectivo?")) return;
+
+    setDeclarando(true);
+    setError("");
+
+    const res = await declararPagoSinComprobante(slug);
+    if (!res.ok) setError(res.error);
+
+    setDeclarando(false);
     await cargar();
   };
 
@@ -189,7 +206,7 @@ export default function PlayerViewPage() {
             {yo.pagoEstado === "confirmado"
               ? "✅ Pago confirmado"
               : yo.pagoEstado === "pendiente_confirmacion"
-              ? "⏳ Comprobante enviado"
+              ? "⏳ Pendiente de confirmación"
               : yo.pagoEstado === "rechazado"
               ? "❌ Comprobante rechazado"
               : "💰 Tu pago"}
@@ -201,36 +218,56 @@ export default function PlayerViewPage() {
 
           {yo.pagoEstado !== "confirmado" && (
             <>
-              <p className="text-[var(--texto)]/60 text-xs mb-3">
-                {yo.pagoEstado === "rechazado"
-                  ? "El comprobante fue rechazado. Podés subir otro."
-                  : "Subí una foto del comprobante de transferencia."}
-              </p>
+              {yo.pagoEstado === "pendiente_confirmacion" ? (
+                <p className="text-[var(--texto)]/60 text-xs">
+                  {yo.tieneComprobante
+                    ? "⏳ Comprobante enviado. El organizador lo va a revisar."
+                    : "⏳ Declaraste el pago. El organizador lo va a confirmar."}
+                </p>
+              ) : (
+                <>
+                  <p className="text-[var(--texto)]/60 text-xs mb-3">
+                    {yo.pagoEstado === "rechazado"
+                      ? "El pago fue rechazado. Podés subir comprobante o pagar en efectivo."
+                      : "Subí un comprobante o decí que pagaste en efectivo."}
+                  </p>
 
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handleSubirComprobante}
-                className="hidden"
-              />
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    onChange={handleSubirComprobante}
+                    className="hidden"
+                  />
 
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={subiendo}
-                className="w-full bg-[var(--primario)]/20 text-[var(--primario)] font-medium py-3 px-4 rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
-              >
-                {subiendo
-                  ? "Subiendo..."
-                  : yo.pagoEstado === "rechazado"
-                  ? "Subir nuevo comprobante"
-                  : "📸 Subir comprobante"}
-              </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={subiendo}
+                      className="flex-1 bg-[var(--primario)]/20 text-[var(--primario)] font-medium py-3 px-4 rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
+                    >
+                      {subiendo
+                        ? "Subiendo..."
+                        : "📸 Subir comprobante"}
+                    </button>
+
+                    <button
+                      onClick={handleDeclararPago}
+                      disabled={declarando}
+                      className="flex-1 bg-[var(--primario)]/10 text-[var(--primario)] font-medium py-3 px-4 rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
+                    >
+                      {declarando
+                        ? "Enviando..."
+                        : "💵 Pagado en efectivo"}
+                    </button>
+                  </div>
+                </>
+              )}
             </>
           )}
 
-          {yo.tieneComprobante && yo.pagoEstado !== "rechazado" && (
+          {yo.pagoEstado === "pendiente_confirmacion" && yo.tieneComprobante && (
             <p className="text-center text-[var(--texto)]/50 text-xs mt-3">
               Comprobante enviado. Solo el organizador puede verlo.
             </p>

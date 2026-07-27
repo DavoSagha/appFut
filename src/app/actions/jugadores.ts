@@ -141,13 +141,56 @@ export async function unirsePartido(slug: string, nombreCrudo: string) {
   if (!p) return fallo("Partido no encontrado");
   if (p.estado === "cerrado") return fallo("Este partido ya está cerrado");
 
+  // UNIQUE(partido_id, nombre): controlamos duplicado antes del insert
+  // para poder hacer reclaim si el jugador perdió su sesión.
+  const { data: existing } = await supabase
+    .from("jugadores")
+    .select("id, user_id")
+    .eq("partido_id", p.id)
+    .eq("nombre", nombre)
+    .maybeSingle();
+
+  if (existing) {
+    if (existing.user_id === usuario.id) {
+      // Mismo usuario re-entrando → redirigir
+      revalidatePath(`/p/${slug}`);
+      return { ok: true as const };
+    }
+    // Distinto usuario → reclaim: actualizar user_id al nuevo auth.uid()
+    const { error: reclaimErr } = await supabase
+      .from("jugadores")
+      .update({ user_id: usuario.id })
+      .eq("id", existing.id);
+
+    if (reclaimErr) return falloDe("unirsePartido/reclaim", reclaimErr);
+
+    revalidatePath(`/p/${slug}`);
+    return { ok: true as const };
+  }
+
   const { error } = await supabase
     .from("jugadores")
     .insert({ partido_id: p.id, nombre, user_id: usuario.id });
 
   if (error) {
-    // UNIQUE(partido_id, user_id): ya estás anotado en este partido.
+    // Race condition: alguien más ya insertó el mismo nombre.
     if (error.code === "23505") {
+      // Reclaim en caliente
+      const { data: conflicto } = await supabase
+        .from("jugadores")
+        .select("id, user_id")
+        .eq("partido_id", p.id)
+        .eq("nombre", nombre)
+        .maybeSingle();
+
+      if (conflicto && conflicto.user_id !== usuario.id) {
+        const { error: reclaimErr } = await supabase
+          .from("jugadores")
+          .update({ user_id: usuario.id })
+          .eq("id", conflicto.id);
+
+        if (reclaimErr) return falloDe("unirsePartido/reclaimRace", reclaimErr);
+      }
       revalidatePath(`/p/${slug}`);
       return { ok: true as const };
     }

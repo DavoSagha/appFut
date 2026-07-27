@@ -180,8 +180,8 @@ export default function UnirsePage() {
                 ))}
               </div>
               <p className="text-[var(--texto)]/40 text-xs text-center mt-4">
-                ¿Ya estabas anotado y cambiaste de teléfono? Pedile al
-                organizador que te dé de baja y volvé a entrar.
+                ¿Perdiste la sesión? Volvé a anotarte con tu mismo nombre
+                y recuperás tu lugar.
               </p>
             </div>
           )}
