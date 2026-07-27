@@ -3,7 +3,14 @@
 import { revalidatePath } from "next/cache";
 
 import { createClient } from "@/lib/supabase/server";
-import { esSlug, esUuid, fallo, falloDe, usuarioActual } from "@/lib/auth-guard";
+import {
+  esSlug,
+  esUuid,
+  fallo,
+  falloDe,
+  organizadorActual,
+  usuarioActual,
+} from "@/lib/auth-guard";
 import { EMOJIS, NOMBRE_MAX_LARGO } from "@/lib/constants";
 import type { PagoEstado, PartidoEstado, JugadorRol } from "@/lib/db/types";
 
@@ -121,6 +128,13 @@ export async function obtenerVistaPartido(slug: string) {
   return { ok: true as const, data: vista };
 }
 
+export type AccionUnirse =
+  | "creada"
+  | "reclamada"
+  | "reclamada_libre"
+  | "ya_estabas";
+
+/** Une al jugador, o le devuelve su ficha si perdió la sesión anónima. */
 export async function unirsePartido(slug: string, nombreCrudo: string) {
   if (!esSlug(slug)) return fallo("Link inválido");
 
@@ -133,73 +147,27 @@ export async function unirsePartido(slug: string, nombreCrudo: string) {
 
   const supabase = await createClient();
 
-  const { data: rawPartido } = await supabase.rpc("partido_por_slug", {
+  // Todo el chequeo + el UPDATE ocurren atómicos y bajo advisory lock dentro
+  // de unirse_o_reclamar(). Va por SECURITY DEFINER a propósito: el que
+  // reclama todavía NO es jugador del partido, así que RLS no lo deja ni leer
+  // la ficha. La alternativa era aflojar la policy — que es exactamente cómo
+  // se rompió la seguridad la primera vez.
+  const { data, error } = await supabase.rpc("unirse_o_reclamar", {
     p_slug: slug,
+    p_nombre: nombre,
   });
 
-  const p = (rawPartido as FilaPartido[] | null)?.[0];
-  if (!p) return fallo("Partido no encontrado");
-  if (p.estado === "cerrado") return fallo("Este partido ya está cerrado");
-
-  // UNIQUE(partido_id, nombre): controlamos duplicado antes del insert
-  // para poder hacer reclaim si el jugador perdió su sesión.
-  const { data: existing } = await supabase
-    .from("jugadores")
-    .select("id, user_id")
-    .eq("partido_id", p.id)
-    .eq("nombre", nombre)
-    .maybeSingle();
-
-  if (existing) {
-    if (existing.user_id === usuario.id) {
-      // Mismo usuario re-entrando → redirigir
-      revalidatePath(`/p/${slug}`);
-      return { ok: true as const };
-    }
-    // Distinto usuario → reclaim vía RPC (bypass RLS)
-    const { data: reclaimOk } = await supabase.rpc("reclamar_jugador", {
-      p_jugador_id: existing.id,
-      p_slug: slug,
-    });
-
-    if (!reclaimOk) return falloDe("unirsePartido/reclaim", { message: "No se pudo reclamar el nombre" });
-
-    revalidatePath(`/p/${slug}`);
-    return { ok: true as const };
-  }
-
-  const { error } = await supabase
-    .from("jugadores")
-    .insert({ partido_id: p.id, nombre, user_id: usuario.id });
-
   if (error) {
-    // Race condition: alguien más ya insertó el mismo nombre.
-    if (error.code === "23505") {
-      // Reclaim en caliente vía RPC
-      const { data: conflicto } = await supabase
-        .from("jugadores")
-        .select("id")
-        .eq("partido_id", p.id)
-        .eq("nombre", nombre)
-        .maybeSingle();
-
-      if (conflicto) {
-        await supabase.rpc("reclamar_jugador", {
-          p_jugador_id: conflicto.id,
-          p_slug: slug,
-        });
-      }
-      revalidatePath(`/p/${slug}`);
-      return { ok: true as const };
-    }
-    if (error.message.includes("cerrado")) {
-      return fallo("Este partido ya está cerrado");
-    }
+    // P0001 = RAISE EXCEPTION de plpgsql: son mensajes nuestros, ya redactados
+    // para el usuario. Cualquier otro código es un problema real.
+    if (error.code === "P0001") return fallo(error.message);
     return falloDe("unirsePartido", error);
   }
 
+  const fila = (data as { jugador_id: string; accion: AccionUnirse }[] | null)?.[0];
+
   revalidatePath(`/p/${slug}`);
-  return { ok: true as const };
+  return { ok: true as const, data: { accion: fila?.accion ?? "creada" } };
 }
 
 export async function elegirEmoji(slug: string, emoji: string) {
@@ -294,9 +262,12 @@ export async function agregarJugador(partidoId: string, nombreCrudo: string) {
 
   const supabase = await createClient();
 
+  // user_id NULL: la ficha queda SIN dueño. El jugador la reclama después
+  // escribiendo su nombre, y así el organizador no queda dueño de N fichas
+  // (que además chocarían contra el índice único (partido_id, user_id)).
   const { error } = await supabase
     .from("jugadores")
-    .insert({ partido_id: partidoId, nombre, user_id: userId });
+    .insert({ partido_id: partidoId, nombre, user_id: null });
 
   if (error) {
     if (error.code === "23505") return fallo("Ya hay un jugador con ese nombre");
