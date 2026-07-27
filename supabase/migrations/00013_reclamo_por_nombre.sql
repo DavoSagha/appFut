@@ -25,6 +25,81 @@
 DROP FUNCTION IF EXISTS public.reclamar_jugador(UUID, TEXT);
 
 -- ------------------------------------------------------------
+-- 0b. Revertir el bypass de 00010. VA PRIMERO A PROPÓSITO: la limpieza
+--     de duplicados del paso 2 borra jugadores, eso dispara la promoción
+--     de suplentes, y esa promoción hace UPDATE sobre jugadores y pagos.
+--     Con las funciones viejas, esos UPDATE mueren acá mismo.
+--
+--     Sobre el bypass: `IF current_user <> session_user THEN RETURN NEW`
+--     quedó al revés de lo que se buscaba. Desde la app (PostgREST entra
+--     como `authenticator` y hace SET ROLE) los roles NUNCA coinciden, así
+--     que la protección no corría jamás. Desde el SQL Editor los dos son
+--     `postgres`, coinciden, y ahí sí bloqueaba. O sea: permitía donde
+--     había que proteger y bloqueaba donde había que dejar pasar.
+--
+--     Lo que había que distinguir es "UPDATE directo del usuario" de
+--     "UPDATE disparado por otro trigger". Para eso está pg_trigger_depth().
+-- ------------------------------------------------------------
+CREATE OR REPLACE FUNCTION proteger_columnas_jugador()
+RETURNS TRIGGER
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+BEGIN
+  -- Cascada interna (ej: reasignar_suplentes_a_titulares promoviendo).
+  IF pg_trigger_depth() > 1 THEN RETURN NEW; END IF;
+
+  -- Reclamo autorizado por unirse_o_reclamar().
+  IF COALESCE(current_setting('appfut.reclamo', true), 'off') = 'on' THEN
+    RETURN NEW;
+  END IF;
+
+  -- Mantenimiento directo en la base (migraciones, SQL Editor).
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+
+  IF public.es_organizador_de(NEW.partido_id) THEN RETURN NEW; END IF;
+
+  IF NEW.partido_id IS DISTINCT FROM OLD.partido_id
+     OR NEW.user_id  IS DISTINCT FROM OLD.user_id
+     OR NEW.rol      IS DISTINCT FROM OLD.rol
+     OR NEW.orden_ingreso IS DISTINCT FROM OLD.orden_ingreso THEN
+    RAISE EXCEPTION 'Solo podés cambiar tu nombre o tu emoji';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION proteger_columnas_pago()
+RETURNS TRIGGER
+SECURITY DEFINER SET search_path = public, pg_temp
+AS $$
+DECLARE
+  v_partido_id UUID;
+BEGIN
+  IF pg_trigger_depth() > 1 THEN RETURN NEW; END IF;
+  IF auth.uid() IS NULL THEN RETURN NEW; END IF;
+
+  SELECT partido_id INTO v_partido_id FROM jugadores WHERE id = NEW.jugador_id;
+
+  IF public.es_organizador_de(v_partido_id) THEN RETURN NEW; END IF;
+
+  IF NEW.monto_esperado  IS DISTINCT FROM OLD.monto_esperado
+     OR NEW.monto_pagado IS DISTINCT FROM OLD.monto_pagado
+     OR NEW.jugador_id   IS DISTINCT FROM OLD.jugador_id
+     OR NEW.confirmado_por IS DISTINCT FROM OLD.confirmado_por THEN
+    RAISE EXCEPTION 'No podés modificar el monto ni la confirmación de tu pago';
+  END IF;
+
+  IF NEW.estado IS DISTINCT FROM OLD.estado
+     AND NEW.estado <> 'pendiente_confirmacion' THEN
+    RAISE EXCEPTION 'Solo podés marcar tu pago como pendiente de confirmación';
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- ------------------------------------------------------------
 -- 1. La ficha puede no tener dueño todavía
 -- ------------------------------------------------------------
 ALTER TABLE jugadores ALTER COLUMN user_id DROP NOT NULL;
@@ -44,6 +119,59 @@ COMMENT ON COLUMN jugadores.user_id_anterior IS
 -- ------------------------------------------------------------
 ALTER TABLE jugadores DROP CONSTRAINT IF EXISTS jugadores_partido_nombre_key;
 ALTER TABLE jugadores DROP CONSTRAINT IF EXISTS jugadores_partido_user_key;
+
+-- Limpieza previa: sin esto los índices no se pueden crear.
+-- La 00011 dedupló por `nombre` exacto, así que "aa" y "AA" sobrevivieron
+-- las dos. Acá el criterio es case-insensitive.
+--
+-- Cuál se queda, en orden de prioridad:
+--   1. la que tiene plata comprometida (confirmado > pendiente > rechazado)
+--   2. la que tiene dueño por sobre la que no
+--   3. la que entró primero
+-- Nunca se descarta un pago confirmado por una ficha vacía.
+
+-- 1a. Duplicados por nombre (case-insensitive)
+WITH ranked AS (
+  SELECT j.id,
+         ROW_NUMBER() OVER (
+           PARTITION BY j.partido_id, lower(j.nombre)
+           ORDER BY
+             CASE pg.estado
+               WHEN 'confirmado'             THEN 0
+               WHEN 'pendiente_confirmacion' THEN 1
+               WHEN 'rechazado'              THEN 2
+               ELSE 3
+             END,
+             (j.user_id IS NULL),  -- false (con dueño) ordena antes que true
+             j.orden_ingreso,
+             j.created_at
+         ) AS rn
+  FROM jugadores j
+  LEFT JOIN pagos pg ON pg.jugador_id = j.id
+)
+DELETE FROM jugadores WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+
+-- 1b. Duplicados por usuario: la 00011 soltó esa garantía, así que un mismo
+--     usuario pudo anotarse varias veces con nombres distintos.
+WITH ranked AS (
+  SELECT j.id,
+         ROW_NUMBER() OVER (
+           PARTITION BY j.partido_id, j.user_id
+           ORDER BY
+             CASE pg.estado
+               WHEN 'confirmado'             THEN 0
+               WHEN 'pendiente_confirmacion' THEN 1
+               WHEN 'rechazado'              THEN 2
+               ELSE 3
+             END,
+             j.orden_ingreso,
+             j.created_at
+         ) AS rn
+  FROM jugadores j
+  LEFT JOIN pagos pg ON pg.jugador_id = j.id
+  WHERE j.user_id IS NOT NULL
+)
+DELETE FROM jugadores WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
 
 -- Un usuario, una ficha por partido. Las fichas sin dueño no cuentan.
 CREATE UNIQUE INDEX IF NOT EXISTS jugadores_partido_user_uidx
@@ -68,71 +196,9 @@ CREATE POLICY "anotarse a si mismo"
   );
 
 -- ------------------------------------------------------------
--- 3. Revertir el bypass de 00010.
---
---    `IF current_user <> session_user THEN RETURN NEW` era SIEMPRE
---    verdadero: PostgREST entra como `authenticator` y hace SET ROLE,
---    y dentro de una función SECURITY DEFINER current_user es el dueño
---    de la función. Nunca coinciden -> la protección no corría nunca.
---
---    Lo que en realidad había que distinguir es "UPDATE directo del
---    usuario" de "UPDATE disparado por otro trigger" (la promoción de
---    suplentes). Para eso está pg_trigger_depth().
+-- 3. (Las protecciones de columnas se corrigieron arriba, en el paso 0b:
+--     tienen que estar arregladas ANTES de la limpieza del paso 2.)
 -- ------------------------------------------------------------
-CREATE OR REPLACE FUNCTION proteger_columnas_jugador()
-RETURNS TRIGGER
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-BEGIN
-  -- Cascada interna (ej: reasignar_suplentes_a_titulares promoviendo).
-  IF pg_trigger_depth() > 1 THEN RETURN NEW; END IF;
-
-  -- Reclamo autorizado por unirse_o_reclamar().
-  IF COALESCE(current_setting('appfut.reclamo', true), 'off') = 'on' THEN
-    RETURN NEW;
-  END IF;
-
-  IF public.es_organizador_de(NEW.partido_id) THEN RETURN NEW; END IF;
-
-  IF NEW.partido_id IS DISTINCT FROM OLD.partido_id
-     OR NEW.user_id  IS DISTINCT FROM OLD.user_id
-     OR NEW.rol      IS DISTINCT FROM OLD.rol
-     OR NEW.orden_ingreso IS DISTINCT FROM OLD.orden_ingreso THEN
-    RAISE EXCEPTION 'Solo podés cambiar tu nombre o tu emoji';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE OR REPLACE FUNCTION proteger_columnas_pago()
-RETURNS TRIGGER
-SECURITY DEFINER SET search_path = public, pg_temp
-AS $$
-DECLARE
-  v_partido_id UUID;
-BEGIN
-  IF pg_trigger_depth() > 1 THEN RETURN NEW; END IF;
-
-  SELECT partido_id INTO v_partido_id FROM jugadores WHERE id = NEW.jugador_id;
-
-  IF public.es_organizador_de(v_partido_id) THEN RETURN NEW; END IF;
-
-  IF NEW.monto_esperado  IS DISTINCT FROM OLD.monto_esperado
-     OR NEW.monto_pagado IS DISTINCT FROM OLD.monto_pagado
-     OR NEW.jugador_id   IS DISTINCT FROM OLD.jugador_id
-     OR NEW.confirmado_por IS DISTINCT FROM OLD.confirmado_por THEN
-    RAISE EXCEPTION 'No podés modificar el monto ni la confirmación de tu pago';
-  END IF;
-
-  IF NEW.estado IS DISTINCT FROM OLD.estado
-     AND NEW.estado <> 'pendiente_confirmacion' THEN
-    RAISE EXCEPTION 'Solo podés marcar tu pago como pendiente de confirmación';
-  END IF;
-
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
 
 -- ------------------------------------------------------------
 -- 4. verificar_confirmacion_pago necesita SECURITY DEFINER.
