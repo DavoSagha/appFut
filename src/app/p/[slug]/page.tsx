@@ -1,150 +1,101 @@
 "use client";
 
-import { useCallback, useEffect, useState, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+
 import {
-  getSavedJugadorId,
-  getOrCreateDeviceId,
-  saveJugadorId,
-} from "@/lib/device";
-import type { Partido, Jugador, Pago } from "@/lib/db/types";
-
-interface JugadorConPago extends Jugador {
-  pago: Pago | null;
-}
-
-const EMOJIS = ["⚡", "🔥", "💪", "🦊", "🐺", "🦅", "🐂", "🐐", "⭐", "🎯"];
+  obtenerVistaPartido,
+  elegirEmoji,
+  darseDeBaja,
+  type VistaPartido,
+} from "@/app/actions/jugadores";
+import { subirComprobante } from "@/app/actions/pagos";
+import { asegurarSesion } from "@/lib/supabase/ensure-session";
+import { EMOJIS } from "@/lib/constants";
 
 export default function PlayerViewPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
-  const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
-  const getSupabase = () => {
-    if (!supabaseRef.current) supabaseRef.current = createClient();
-    return supabaseRef.current;
-  };
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [loading, setLoading] = useState(true);
-  const [partido, setPartido] = useState<Partido | null>(null);
-  const [jugador, setJugador] = useState<JugadorConPago | null>(null);
-  const [todosJugadores, setTodosJugadores] = useState<JugadorConPago[]>([]);
+  const [cargando, setCargando] = useState(true);
+  const [vista, setVista] = useState<VistaPartido | null>(null);
   const [error, setError] = useState("");
   const [subiendo, setSubiendo] = useState(false);
 
-  const cargarDatos = useCallback(async () => {
-    const supabase = getSupabase();
-    const { data: p } = await supabase
-      .from("partidos")
-      .select("*")
-      .eq("link_slug", slug)
-      .single();
-
-    if (!p) {
-      setError("Partido no encontrado");
-      setLoading(false);
+  const cargar = useCallback(async () => {
+    const uid = await asegurarSesion();
+    if (!uid) {
+      setError("No se pudo iniciar la sesión. ¿Habilitaste anonymous sign-ins?");
+      setCargando(false);
       return;
     }
 
-    const partidoData = p as Partido;
-    setPartido(partidoData);
+    const res = await obtenerVistaPartido(slug);
 
-    const { data: jugs } = await supabase
-      .from("jugadores")
-      .select("*, pago:pagos(*)")
-      .eq("partido_id", partidoData.id)
-      .order("orden_ingreso", { ascending: true });
-
-    const todos = (jugs as unknown as JugadorConPago[]) ?? [];
-    setTodosJugadores(todos);
-
-    const savedId = getSavedJugadorId(partidoData.id);
-    const deviceId = getOrCreateDeviceId();
-
-    let miJugador = savedId
-      ? todos.find((j) => j.id === savedId)
-      : null;
-
-    if (!miJugador) {
-      miJugador = todos.find((j) => j.device_id === deviceId) ?? null;
+    if (!res.ok) {
+      setError(res.error);
+      setCargando(false);
+      return;
     }
 
-    if (miJugador) {
-      saveJugadorId(partidoData.id, miJugador.id);
-      setJugador(miJugador);
-    } else {
+    if (!res.data.yo) {
       router.replace(`/unirse/${slug}`);
       return;
     }
 
-    setLoading(false);
+    setVista(res.data);
+    setCargando(false);
   }, [slug, router]);
 
   useEffect(() => {
-    cargarDatos();
-  }, [cargarDatos]);
+    // El await evita que el setState caiga sincrónico dentro del efecto.
+    (async () => {
+      await cargar();
+    })();
+  }, [cargar]);
 
-  const handleSubirComprobante = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const supabase = getSupabase();
+  const handleSubirComprobante = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     const file = e.target.files?.[0];
-    if (!file || !partido || !jugador) return;
+    if (!file) return;
 
     setSubiendo(true);
+    setError("");
 
-    const fileExt = file.name.split(".").pop();
-    const filePath = `${partido.id}/${jugador.id}/comprobante.${fileExt}`;
+    const formData = new FormData();
+    formData.append("comprobante", file);
 
-    const { error: uploadError } = await supabase.storage
-      .from("comprobantes")
-      .upload(filePath, file, { upsert: true });
+    const res = await subirComprobante(slug, formData);
+    if (!res.ok) setError(res.error);
 
-    if (uploadError) {
-      alert("Error al subir: " + uploadError.message);
-      setSubiendo(false);
-      return;
-    }
-
-    const { data: urlData } = supabase.storage
-      .from("comprobantes")
-      .getPublicUrl(filePath);
-
-    const { error: updateError } = await supabase
-      .from("pagos")
-      .update({
-        comprobante_url: urlData.publicUrl,
-        estado: "pendiente_confirmacion",
-      })
-      .eq("jugador_id", jugador.id);
-
-    if (updateError) {
-      alert("Error al actualizar: " + updateError.message);
-    }
-
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setSubiendo(false);
-    cargarDatos();
+    await cargar();
   };
 
   const handleElegirEmoji = async (emoji: string) => {
-    if (!jugador) return;
-    const supabase = getSupabase();
-    await supabase
-      .from("jugadores")
-      .update({ emoji_o_color: emoji })
-      .eq("id", jugador.id);
-    cargarDatos();
+    const res = await elegirEmoji(slug, emoji);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    await cargar();
   };
 
   const handleDarseDeBaja = async () => {
-    if (!jugador || !confirm("¿Querés darte de baja del partido?")) return;
-    const supabase = getSupabase();
-    await supabase.from("jugadores").delete().eq("id", jugador.id);
-    const key = `appfut_partido_${jugador.partido_id}_jugador_id`;
-    localStorage.removeItem(key);
+    if (!confirm("¿Querés darte de baja del partido?")) return;
+
+    const res = await darseDeBaja(slug);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
     router.replace(`/unirse/${slug}`);
   };
 
-  if (loading) {
+  if (cargando) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin text-4xl">⚽</div>
@@ -152,54 +103,61 @@ export default function PlayerViewPage() {
     );
   }
 
-  if (error || !partido || !jugador) {
+  if (!vista?.yo) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen px-6">
         <div className="text-5xl mb-4">🚫</div>
-        <p className="text-[var(--texto)]/70 text-center">{error}</p>
+        <p className="text-[var(--texto)]/70 text-center">
+          {error || "Partido no encontrado"}
+        </p>
       </div>
     );
   }
 
-  const miPago = jugador.pago;
-  const titulares = todosJugadores.filter((j) => j.rol === "titular");
-  const suplentes = todosJugadores.filter((j) => j.rol === "suplente");
+  const { partido, jugadores, yo } = vista;
+  const titulares = jugadores.filter((j) => j.rol === "titular");
+  const suplentes = jugadores.filter((j) => j.rol === "suplente");
+  const porEquipo = partido.cantidadJugadores / 2;
+
   return (
     <div className="min-h-screen px-4 py-6 max-w-lg mx-auto">
       <div className="text-center mb-8">
-        <div className="text-5xl mb-2">
-          {jugador.emoji_o_color ?? "⚽"}
-        </div>
+        <div className="text-5xl mb-2">{yo.emoji ?? "⚽"}</div>
         <h1 className="text-2xl font-bold text-[var(--primario)]">
-          ¡Hola, {jugador.nombre}!
+          ¡Hola, {yo.nombre}!
         </h1>
       </div>
 
+      {error && (
+        <p className="text-red-400 text-sm bg-red-400/10 rounded-lg px-3 py-2 mb-4 text-center">
+          {error}
+        </p>
+      )}
+
       <div className="bg-[var(--superficie)] rounded-xl p-4 mb-6">
         <p className="text-sm text-[var(--texto)]/70">
-          {new Date(partido.fecha_hora).toLocaleDateString("es-AR", {
+          {new Date(partido.fechaHora).toLocaleDateString("es-AR", {
             weekday: "long",
             day: "numeric",
             month: "long",
           })}
         </p>
         <p className="text-[var(--texto)]/50 text-xs">
-          {new Date(partido.fecha_hora).toLocaleTimeString("es-AR", {
+          {new Date(partido.fechaHora).toLocaleTimeString("es-AR", {
             hour: "2-digit",
             minute: "2-digit",
           })}{" "}
-          · {partido.cantidad_jugadores / 2} vs{" "}
-          {partido.cantidad_jugadores / 2}
+          · {porEquipo} vs {porEquipo}
         </p>
         <div className="mt-2">
           <span
             className={`text-xs font-medium px-2 py-1 rounded-full ${
-              jugador.rol === "titular"
+              yo.rol === "titular"
                 ? "bg-[var(--primario)]/20 text-[var(--primario)]"
                 : "bg-[var(--pendiente)]/20 text-[var(--pendiente)]"
             }`}
           >
-            {jugador.rol === "titular" ? "Titular" : "Suplente"}
+            {yo.rol === "titular" ? "Titular" : "Suplente"}
           </span>
         </div>
       </div>
@@ -214,7 +172,7 @@ export default function PlayerViewPage() {
               key={e}
               onClick={() => handleElegirEmoji(e)}
               className={`text-2xl w-10 h-10 flex items-center justify-center rounded-lg transition-all ${
-                jugador.emoji_o_color === e
+                yo.emoji === e
                   ? "bg-[var(--primario)]/20 ring-2 ring-[var(--primario)]"
                   : "hover:bg-[var(--primario)]/10"
               }`}
@@ -225,26 +183,26 @@ export default function PlayerViewPage() {
         </div>
       </div>
 
-      {jugador.rol === "titular" && (
+      {yo.rol === "titular" && (
         <div className="bg-[var(--superficie)] rounded-xl p-4 mb-6">
           <h2 className="text-sm font-semibold text-[var(--texto)]/70 mb-3 uppercase tracking-wider">
-            {miPago?.estado === "confirmado"
+            {yo.pagoEstado === "confirmado"
               ? "✅ Pago confirmado"
-              : miPago?.estado === "pendiente_confirmacion"
+              : yo.pagoEstado === "pendiente_confirmacion"
               ? "⏳ Comprobante enviado"
-              : miPago?.estado === "rechazado"
+              : yo.pagoEstado === "rechazado"
               ? "❌ Comprobante rechazado"
               : "💰 Tu pago"}
           </h2>
 
           <p className="text-2xl font-bold text-[var(--primario)] mb-4">
-            ${miPago?.monto_esperado.toFixed(2) ?? "0.00"}
+            ${yo.montoEsperado.toFixed(2)}
           </p>
 
-          {miPago?.estado !== "confirmado" && (
+          {yo.pagoEstado !== "confirmado" && (
             <>
               <p className="text-[var(--texto)]/60 text-xs mb-3">
-                {miPago?.estado === "rechazado"
+                {yo.pagoEstado === "rechazado"
                   ? "El comprobante fue rechazado. Podés subir otro."
                   : "Subí una foto del comprobante de transferencia."}
               </p>
@@ -265,29 +223,24 @@ export default function PlayerViewPage() {
               >
                 {subiendo
                   ? "Subiendo..."
-                  : miPago?.estado === "rechazado"
+                  : yo.pagoEstado === "rechazado"
                   ? "Subir nuevo comprobante"
                   : "📸 Subir comprobante"}
               </button>
             </>
           )}
 
-          {miPago?.comprobante_url && miPago?.estado !== "rechazado" && (
-            <a
-              href={miPago.comprobante_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block text-center text-[var(--primario)] text-sm mt-2 hover:underline"
-            >
-              Ver comprobante subido
-            </a>
+          {yo.tieneComprobante && yo.pagoEstado !== "rechazado" && (
+            <p className="text-center text-[var(--texto)]/50 text-xs mt-3">
+              Comprobante enviado. Solo el organizador puede verlo.
+            </p>
           )}
         </div>
       )}
 
       <div className="bg-[var(--superficie)] rounded-xl p-4 mb-6">
         <h2 className="text-sm font-semibold text-[var(--texto)]/70 mb-3 uppercase tracking-wider">
-          Jugadores ({todosJugadores.length})
+          Jugadores ({jugadores.length})
         </h2>
 
         <div className="space-y-2">
@@ -295,28 +248,28 @@ export default function PlayerViewPage() {
             <div
               key={j.id}
               className={`flex items-center justify-between ${
-                j.id === jugador.id
+                j.id === yo.id
                   ? "text-[var(--primario)] font-medium"
                   : "text-[var(--texto)]"
               }`}
             >
               <span>
-                {j.emoji_o_color && <span className="mr-1.5">{j.emoji_o_color}</span>}
+                {j.emoji && <span className="mr-1.5">{j.emoji}</span>}
                 {j.nombre}
-                {j.id === jugador.id && <span className="ml-1">(vos)</span>}
+                {j.id === yo.id && <span className="ml-1">(vos)</span>}
               </span>
               <span
                 className={`text-xs ${
-                  j.pago?.estado === "confirmado"
+                  j.pagoEstado === "confirmado"
                     ? "text-[var(--confirmado)]"
-                    : j.pago?.estado === "pendiente_confirmacion"
+                    : j.pagoEstado === "pendiente_confirmacion"
                     ? "text-[var(--pendiente)]"
                     : "text-[var(--texto)]/30"
                 }`}
               >
-                {j.pago?.estado === "confirmado"
+                {j.pagoEstado === "confirmado"
                   ? "✓"
-                  : j.pago?.estado === "pendiente_confirmacion"
+                  : j.pagoEstado === "pendiente_confirmacion"
                   ? "⏳"
                   : "—"}
               </span>
@@ -325,29 +278,25 @@ export default function PlayerViewPage() {
         </div>
 
         {suplentes.length > 0 && (
-          <>
-            <div className="border-t border-[var(--texto)]/10 my-3 pt-3">
-              <p className="text-xs text-[var(--texto)]/50 mb-2">
-                Suplentes
-              </p>
-              {suplentes.map((j) => (
-                <div
-                  key={j.id}
-                  className={`flex items-center justify-between ${
-                    j.id === jugador.id
-                      ? "text-[var(--primario)] font-medium"
-                      : "text-[var(--texto)]"
-                  }`}
-                >
-                  <span>
-                    {j.emoji_o_color && <span className="mr-1.5">{j.emoji_o_color}</span>}
-                    {j.nombre}
-                    {j.id === jugador.id && <span className="ml-1">(vos)</span>}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </>
+          <div className="border-t border-[var(--texto)]/10 my-3 pt-3">
+            <p className="text-xs text-[var(--texto)]/50 mb-2">Suplentes</p>
+            {suplentes.map((j) => (
+              <div
+                key={j.id}
+                className={`flex items-center justify-between ${
+                  j.id === yo.id
+                    ? "text-[var(--primario)] font-medium"
+                    : "text-[var(--texto)]"
+                }`}
+              >
+                <span>
+                  {j.emoji && <span className="mr-1.5">{j.emoji}</span>}
+                  {j.nombre}
+                  {j.id === yo.id && <span className="ml-1">(vos)</span>}
+                </span>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 

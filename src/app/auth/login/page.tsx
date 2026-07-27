@@ -5,6 +5,15 @@ import { createClient } from "@/lib/supabase/client";
 export default function LoginPage() {
   const handleGoogleLogin = async () => {
     const supabase = createClient();
+
+    // Si venías navegando como jugador tenés una sesión anónima. Sin esto,
+    // Supabase LINKEA la identidad de Google a ese usuario anónimo en vez de
+    // crear el organizador, y terminás siendo jugador y organizador a la vez.
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user?.is_anonymous) await supabase.auth.signOut();
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {

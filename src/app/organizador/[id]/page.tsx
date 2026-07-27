@@ -2,12 +2,25 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
-import type { Partido, Jugador, Pago } from "@/lib/db/types";
 
-interface JugadorConPago extends Jugador {
-  pago: Pago | null;
-}
+import { createClient } from "@/lib/supabase/client";
+import { cerrarPartido, reabrirPartido } from "@/app/actions/partidos";
+import { eliminarJugador } from "@/app/actions/jugadores";
+import { confirmarPago, rechazarPago, verComprobante } from "@/app/actions/pagos";
+import type { Partido, JugadorRol, PagoEstado } from "@/lib/db/types";
+
+type JugadorConPago = {
+  id: string;
+  nombre: string;
+  rol: JugadorRol;
+  emoji_o_color: string | null;
+  pago: {
+    estado: PagoEstado;
+    monto_esperado: number;
+    monto_pagado: number | null;
+    comprobante_url: string | null;
+  } | null;
+};
 
 export default function PartidoDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -20,117 +33,96 @@ export default function PartidoDetailPage() {
 
   const [partido, setPartido] = useState<Partido | null>(null);
   const [jugadores, setJugadores] = useState<JugadorConPago[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [isOwner, setIsOwner] = useState(false);
+  const [cargando, setCargando] = useState(true);
+  const [error, setError] = useState("");
   const [linkCopiado, setLinkCopiado] = useState(false);
 
   const cargarDatos = useCallback(async () => {
     try {
       const supabase = getSupabase();
-      const { data: { session } } = await supabase.auth.getSession();
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
       if (!session) {
         router.replace("/auth/login");
         return;
       }
-      const userId = session.user.id;
 
+      // RLS ya limita el SELECT al organizador dueño: si no es suyo, no hay fila.
       const { data: p } = await supabase
         .from("partidos")
         .select("*")
         .eq("id", id)
         .single();
 
-      if (!p || p.organizador_id !== userId) {
+      if (!p) {
         router.replace("/organizador");
         return;
       }
 
       setPartido(p as Partido);
-      setIsOwner(true);
 
-      const { data: jugs } = await supabase
+      const { data: jugs, error: errJugs } = await supabase
         .from("jugadores")
-        .select("*, pago:pagos(*)")
+        .select(
+          "id, nombre, rol, emoji_o_color, pago:pagos(estado, monto_esperado, monto_pagado, comprobante_url)"
+        )
         .eq("partido_id", id)
-        .order("orden_ingreso", { ascending: true });
+        .order("orden_ingreso", { ascending: true })
+        .returns<JugadorConPago[]>();
 
-      if (jugs) setJugadores(jugs as unknown as JugadorConPago[]);
-      else setJugadores([]);
+      if (errJugs) setError("No se pudieron cargar los jugadores");
+      else setJugadores(jugs ?? []);
 
-      setLoading(false);
+      setCargando(false);
     } catch {
       router.replace("/auth/login");
     }
   }, [id, router]);
 
-  useEffect(() => { cargarDatos(); }, [cargarDatos]);
+  useEffect(() => {
+    cargarDatos();
+  }, [cargarDatos]);
 
-  const copiarLink = () => {
+  /** Corre una acción, muestra el error si falla y recarga si sale bien. */
+  const ejecutar = async (accion: () => Promise<{ ok: boolean; error?: string }>) => {
+    setError("");
+    const res = await accion();
+    if (!res.ok) {
+      setError(res.error ?? "No se pudo completar la acción");
+      return;
+    }
+    await cargarDatos();
+  };
+
+  const copiarLink = async () => {
     if (!partido) return;
     const link = `${window.location.origin}/unirse/${partido.link_slug}`;
-    navigator.clipboard.writeText(link);
-    setLinkCopiado(true);
-    setTimeout(() => setLinkCopiado(false), 2000);
-  };
-
-  const confirmarPago = async (jugadorId: string) => {
-    const supabase = getSupabase();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) return;
-    const user = session.user;
-    const { error } = await supabase
-      .from("pagos")
-      .update({ estado: "confirmado", confirmado_por: user.id })
-      .eq("jugador_id", jugadorId);
-    if (error) console.error(error);
-    else cargarDatos();
-  };
-
-  const rechazarPago = async (jugadorId: string) => {
-    const supabase = getSupabase();
-    const { error } = await supabase
-      .from("pagos")
-      .update({ estado: "rechazado", comprobante_url: null })
-      .eq("jugador_id", jugadorId);
-    if (error) console.error(error);
-    else cargarDatos();
-  };
-
-  const cerrarPartido = async () => {
-    const supabase = getSupabase();
-    const { error } = await supabase
-      .from("partidos")
-      .update({ estado: "cerrado" })
-      .eq("id", id);
-    if (error) console.error(error);
-    else cargarDatos();
-  };
-
-  const reabrirPartido = async () => {
-    const supabase = getSupabase();
-    const { error } = await supabase
-      .from("partidos")
-      .update({ estado: "abierto" })
-      .eq("id", id);
-    if (error) console.error(error);
-    else cargarDatos();
-  };
-
-  const eliminarJugador = async (jugadorId: string) => {
-    if (!confirm("¿Eliminar este jugador del partido?")) return;
-    const supabase = getSupabase();
-    const { error } = await supabase
-      .from("jugadores")
-      .delete()
-      .eq("id", jugadorId);
-    if (error) {
-      alert("Error al eliminar: " + error.message);
-    } else {
-      cargarDatos();
+    try {
+      await navigator.clipboard.writeText(link);
+      setLinkCopiado(true);
+      setTimeout(() => setLinkCopiado(false), 2000);
+    } catch {
+      setError(`No se pudo copiar. El link es: ${link}`);
     }
   };
 
-  if (loading) {
+  const handleEliminar = async (jugadorId: string) => {
+    if (!confirm("¿Eliminar este jugador del partido?")) return;
+    await ejecutar(() => eliminarJugador(jugadorId));
+  };
+
+  const handleVerComprobante = async (jugadorId: string) => {
+    setError("");
+    const res = await verComprobante(jugadorId);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    window.open(res.data.url, "_blank", "noopener,noreferrer");
+  };
+
+  if (cargando) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin text-4xl">⚽</div>
@@ -142,9 +134,7 @@ export default function PartidoDetailPage() {
 
   const titulares = jugadores.filter((j) => j.rol === "titular");
   const suplentes = jugadores.filter((j) => j.rol === "suplente");
-  const confirmados = jugadores.filter(
-    (j) => j.pago?.estado === "confirmado"
-  );
+  const confirmados = jugadores.filter((j) => j.pago?.estado === "confirmado");
   const pendientes = jugadores.filter(
     (j) => j.pago?.estado === "pendiente_confirmacion"
   );
@@ -152,10 +142,14 @@ export default function PartidoDetailPage() {
     titulares.length > 0
       ? (partido.costo_total / titulares.length).toFixed(2)
       : "0";
+
+  // Se suma lo que realmente entró, no lo que se espera.
   const totalRecaudado = confirmados.reduce(
-    (acc, j) => acc + (j.pago?.monto_esperado ?? 0),
+    (acc, j) => acc + (j.pago?.monto_pagado ?? j.pago?.monto_esperado ?? 0),
     0
   );
+
+  const porEquipo = partido.cantidad_jugadores / 2;
 
   return (
     <div className="min-h-screen px-4 py-6 max-w-lg mx-auto">
@@ -192,10 +186,15 @@ export default function PartidoDetailPage() {
             hour: "2-digit",
             minute: "2-digit",
           })}{" "}
-          · {partido.cantidad_jugadores / 2} vs{" "}
-          {partido.cantidad_jugadores / 2} · ${partido.costo_total.toFixed(2)}
+          · {porEquipo} vs {porEquipo} · ${partido.costo_total.toFixed(2)}
         </p>
       </div>
+
+      {error && (
+        <p className="text-red-400 text-sm bg-red-400/10 rounded-lg px-3 py-2 mb-4">
+          {error}
+        </p>
+      )}
 
       <button
         onClick={copiarLink}
@@ -205,17 +204,16 @@ export default function PartidoDetailPage() {
       </button>
 
       <div className="flex gap-2 mb-6">
-        {partido.estado !== "cerrado" && (
+        {partido.estado !== "cerrado" ? (
           <button
-            onClick={cerrarPartido}
+            onClick={() => ejecutar(() => cerrarPartido(id))}
             className="flex-1 bg-red-500/10 text-red-400 py-2 rounded-xl text-sm hover:bg-red-500/20 transition-colors"
           >
             Cerrar partido
           </button>
-        )}
-        {partido.estado === "cerrado" && (
+        ) : (
           <button
-            onClick={reabrirPartido}
+            onClick={() => ejecutar(() => reabrirPartido(id))}
             className="flex-1 bg-[var(--primario)]/10 text-[var(--primario)] py-2 rounded-xl text-sm hover:brightness-110 transition-colors"
           >
             Reabrir partido
@@ -265,10 +263,10 @@ export default function PartidoDetailPage() {
             <JugadorCard
               key={j.id}
               jugador={j}
-              onConfirmar={confirmarPago}
-              onRechazar={rechazarPago}
-              onEliminar={eliminarJugador}
-              esOrganizador={isOwner}
+              onConfirmar={(jid) => ejecutar(() => confirmarPago(jid))}
+              onRechazar={(jid) => ejecutar(() => rechazarPago(jid))}
+              onEliminar={handleEliminar}
+              onVerComprobante={handleVerComprobante}
             />
           ))}
         </div>
@@ -284,10 +282,10 @@ export default function PartidoDetailPage() {
               <JugadorCard
                 key={j.id}
                 jugador={j}
-                onConfirmar={confirmarPago}
-                onRechazar={rechazarPago}
-                onEliminar={eliminarJugador}
-                esOrganizador={isOwner}
+                onConfirmar={(jid) => ejecutar(() => confirmarPago(jid))}
+                onRechazar={(jid) => ejecutar(() => rechazarPago(jid))}
+                onEliminar={handleEliminar}
+                onVerComprobante={handleVerComprobante}
               />
             ))}
           </div>
@@ -296,7 +294,8 @@ export default function PartidoDetailPage() {
 
       <div className="text-center text-[var(--texto)]/30 text-xs py-4">
         {jugadores.length} jugadores unidos ·{" "}
-        {partido.cantidad_jugadores - titulares.length} cupos titulares libres
+        {Math.max(0, partido.cantidad_jugadores - titulares.length)} cupos
+        titulares libres
       </div>
     </div>
   );
@@ -307,16 +306,15 @@ function JugadorCard({
   onConfirmar,
   onRechazar,
   onEliminar,
-  esOrganizador,
+  onVerComprobante,
 }: {
   jugador: JugadorConPago;
   onConfirmar: (id: string) => void;
   onRechazar: (id: string) => void;
   onEliminar: (id: string) => void;
-  esOrganizador: boolean;
+  onVerComprobante: (id: string) => void;
 }) {
   const estadoPago = jugador.pago?.estado ?? "sin_declarar";
-  const comprobanteUrl = jugador.pago?.comprobante_url;
 
   return (
     <div className="bg-[var(--superficie)] rounded-xl p-3 flex items-center justify-between">
@@ -335,25 +333,27 @@ function JugadorCard({
           </div>
           {jugador.pago && (
             <p className="text-xs text-[var(--texto)]/50">
-              ${jugador.pago.monto_esperado.toFixed(2)}
+              $
+              {(estadoPago === "confirmado"
+                ? jugador.pago.monto_pagado ?? jugador.pago.monto_esperado
+                : jugador.pago.monto_esperado
+              ).toFixed(2)}
             </p>
           )}
         </div>
       </div>
 
       <div className="flex items-center gap-2">
-        {comprobanteUrl && esOrganizador && (
-          <a
-            href={comprobanteUrl}
-            target="_blank"
-            rel="noopener noreferrer"
+        {jugador.pago?.comprobante_url && (
+          <button
+            onClick={() => onVerComprobante(jugador.id)}
             className="text-[var(--primario)] text-sm hover:underline"
           >
             📎 Ver
-          </a>
+          </button>
         )}
 
-        {estadoPago === "pendiente_confirmacion" && esOrganizador && (
+        {estadoPago === "pendiente_confirmacion" && (
           <>
             <button
               onClick={() => onConfirmar(jugador.id)}
@@ -384,6 +384,7 @@ function JugadorCard({
 
         <button
           onClick={() => onEliminar(jugador.id)}
+          aria-label={`Eliminar a ${jugador.nombre}`}
           className="text-[var(--texto)]/30 hover:text-red-400 text-sm ml-1 transition-colors"
         >
           ✕

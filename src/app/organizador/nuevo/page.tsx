@@ -1,45 +1,22 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase/client";
+
+import { crearPartido } from "@/app/actions/partidos";
 
 export default function NuevoPartidoPage() {
   const router = useRouter();
-  const [userId, setUserId] = useState<string | null>(null);
 
   const [fecha, setFecha] = useState("");
   const [hora, setHora] = useState("");
   const [cantidadJugadores, setCantidadJugadores] = useState(10);
   const [costoTotal, setCostoTotal] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [enviando, setEnviando] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (!session) {
-        router.replace("/auth/login");
-        return;
-      }
-      setUserId(session.user.id);
-    }).catch(() => {
-      router.replace("/auth/login");
-    });
-  }, [router]);
-
-  const generarSlug = () => {
-    const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-    let slug = "";
-    for (let i = 0; i < 8; i++) {
-      slug += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return slug;
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!userId) return;
 
     if (!fecha || !hora || !costoTotal) {
       setError("Completá todos los campos");
@@ -47,45 +24,27 @@ export default function NuevoPartidoPage() {
     }
 
     const costo = parseFloat(costoTotal);
-    if (isNaN(costo) || costo <= 0) {
+    if (Number.isNaN(costo) || costo <= 0) {
       setError("El costo total debe ser un número válido");
       return;
     }
 
-    setSubmitting(true);
+    setEnviando(true);
     setError("");
 
-    const supabase = createClient();
+    const res = await crearPartido({
+      fechaHora: new Date(`${fecha}T${hora}`).toISOString(),
+      cantidadJugadores,
+      costoTotal: costo,
+    });
 
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      setError("Sesión expirada. Volvé a iniciar sesión.");
-      setSubmitting(false);
+    if (!res.ok) {
+      setError(res.error);
+      setEnviando(false);
       return;
     }
 
-    const fechaHora = new Date(`${fecha}T${hora}`);
-
-    const { data, error: err } = await supabase
-      .from("partidos")
-      .insert({
-        organizador_id: userId,
-        fecha_hora: fechaHora.toISOString(),
-        cantidad_jugadores: cantidadJugadores,
-        costo_total: costo,
-        link_slug: generarSlug(),
-        estado: "abierto",
-      })
-      .select()
-      .single();
-
-    if (err) {
-      setError(err.message);
-      setSubmitting(false);
-      return;
-    }
-
-    router.push(`/organizador/${data.id}`);
+    router.push(`/organizador/${res.data.id}`);
   };
 
   return (
@@ -132,9 +91,7 @@ export default function NuevoPartidoPage() {
           </label>
           <select
             value={cantidadJugadores}
-            onChange={(e) =>
-              setCantidadJugadores(parseInt(e.target.value) * 2)
-            }
+            onChange={(e) => setCantidadJugadores(parseInt(e.target.value, 10))}
             className="w-full bg-[var(--superficie)] text-[var(--texto)] rounded-xl px-4 py-3 border border-[var(--texto)]/10 focus:border-[var(--primario)] outline-none transition-colors"
           >
             {[4, 5, 6, 7, 8, 9, 11].map((n) => (
@@ -174,10 +131,10 @@ export default function NuevoPartidoPage() {
 
         <button
           type="submit"
-          disabled={submitting}
+          disabled={enviando}
           className="w-full bg-[var(--primario)] text-[var(--fondo)] font-semibold py-3 px-4 rounded-xl hover:brightness-110 transition-all disabled:opacity-50"
         >
-          {submitting ? "Creando..." : "Crear partido"}
+          {enviando ? "Creando..." : "Crear partido"}
         </button>
       </form>
     </div>

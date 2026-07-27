@@ -21,7 +21,8 @@ export interface Jugador {
   id: string;
   partido_id: string;
   nombre: string;
-  device_id: string;
+  /** Usuario anónimo de Supabase. Reemplazó al device_id de localStorage. */
+  user_id: string;
   rol: JugadorRol;
   emoji_o_color: string | null;
   orden_ingreso: number;
@@ -32,6 +33,9 @@ export interface Pago {
   id: string;
   jugador_id: string;
   monto_esperado: number;
+  /** Congelado al confirmar. Ningún recálculo lo toca. */
+  monto_pagado: number | null;
+  /** Ruta dentro del bucket privado, NO una URL pública. */
   comprobante_url: string | null;
   estado: PagoEstado;
   confirmado_por: string | null;
