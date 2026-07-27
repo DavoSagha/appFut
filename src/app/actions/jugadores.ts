@@ -156,13 +156,13 @@ export async function unirsePartido(slug: string, nombreCrudo: string) {
       revalidatePath(`/p/${slug}`);
       return { ok: true as const };
     }
-    // Distinto usuario → reclaim: actualizar user_id al nuevo auth.uid()
-    const { error: reclaimErr } = await supabase
-      .from("jugadores")
-      .update({ user_id: usuario.id })
-      .eq("id", existing.id);
+    // Distinto usuario → reclaim vía RPC (bypass RLS)
+    const { data: reclaimOk } = await supabase.rpc("reclamar_jugador", {
+      p_jugador_id: existing.id,
+      p_slug: slug,
+    });
 
-    if (reclaimErr) return falloDe("unirsePartido/reclaim", reclaimErr);
+    if (!reclaimOk) return falloDe("unirsePartido/reclaim", { message: "No se pudo reclamar el nombre" });
 
     revalidatePath(`/p/${slug}`);
     return { ok: true as const };
@@ -175,21 +175,19 @@ export async function unirsePartido(slug: string, nombreCrudo: string) {
   if (error) {
     // Race condition: alguien más ya insertó el mismo nombre.
     if (error.code === "23505") {
-      // Reclaim en caliente
+      // Reclaim en caliente vía RPC
       const { data: conflicto } = await supabase
         .from("jugadores")
-        .select("id, user_id")
+        .select("id")
         .eq("partido_id", p.id)
         .eq("nombre", nombre)
         .maybeSingle();
 
-      if (conflicto && conflicto.user_id !== usuario.id) {
-        const { error: reclaimErr } = await supabase
-          .from("jugadores")
-          .update({ user_id: usuario.id })
-          .eq("id", conflicto.id);
-
-        if (reclaimErr) return falloDe("unirsePartido/reclaimRace", reclaimErr);
+      if (conflicto) {
+        await supabase.rpc("reclamar_jugador", {
+          p_jugador_id: conflicto.id,
+          p_slug: slug,
+        });
       }
       revalidatePath(`/p/${slug}`);
       return { ok: true as const };
@@ -281,5 +279,31 @@ export async function eliminarJugador(jugadorId: string) {
   }
 
   revalidatePath(`/organizador/${jugador.partido_id}`);
+  return { ok: true as const };
+}
+
+export async function agregarJugador(partidoId: string, nombreCrudo: string) {
+  if (!esUuid(partidoId)) return fallo("Partido inválido");
+
+  const nombre = String(nombreCrudo ?? "").trim().replace(/\s+/g, " ");
+  if (nombre.length < 2) return fallo("Escribí el nombre");
+  if (nombre.length > NOMBRE_MAX_LARGO) return fallo("El nombre es demasiado largo");
+
+  const userId = await organizadorActual();
+  if (!userId) return fallo("Sesión expirada. Volvé a iniciar sesión.");
+
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("jugadores")
+    .insert({ partido_id: partidoId, nombre, user_id: userId });
+
+  if (error) {
+    if (error.code === "23505") return fallo("Ya hay un jugador con ese nombre");
+    if (error.message.includes("cerrado")) return fallo("El partido está cerrado");
+    return falloDe("agregarJugador", error);
+  }
+
+  revalidatePath(`/organizador/${partidoId}`);
   return { ok: true as const };
 }

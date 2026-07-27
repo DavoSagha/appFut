@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
 import { cerrarPartido, reabrirPartido } from "@/app/actions/partidos";
-import { eliminarJugador } from "@/app/actions/jugadores";
+import { agregarJugador, eliminarJugador } from "@/app/actions/jugadores";
 import { confirmarPago, rechazarPago, verComprobante } from "@/app/actions/pagos";
 import type { Partido, JugadorRol, PagoEstado } from "@/lib/db/types";
 
@@ -36,6 +36,7 @@ export default function PartidoDetailPage() {
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState("");
   const [linkCopiado, setLinkCopiado] = useState(false);
+  const [nuevoNombre, setNuevoNombre] = useState("");
 
   const cargarDatos = useCallback(async () => {
     try {
@@ -110,6 +111,12 @@ export default function PartidoDetailPage() {
   const handleEliminar = async (jugadorId: string) => {
     if (!confirm("¿Eliminar este jugador del partido?")) return;
     await ejecutar(() => eliminarJugador(jugadorId));
+  };
+
+  const handleAgregar = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await ejecutar(() => agregarJugador(id, nuevoNombre));
+    setNuevoNombre("");
   };
 
   const handleVerComprobante = async (jugadorId: string) => {
@@ -198,10 +205,28 @@ export default function PartidoDetailPage() {
 
       <button
         onClick={copiarLink}
-        className="w-full bg-[var(--superficie)] text-[var(--primario)] font-medium py-3 px-4 rounded-xl hover:brightness-110 transition-all mb-6 flex items-center justify-center gap-2"
+        className="w-full bg-[var(--superficie)] text-[var(--primario)] font-medium py-3 px-4 rounded-xl hover:brightness-110 transition-all mb-4 flex items-center justify-center gap-2"
       >
         {linkCopiado ? "✓ Link copiado" : "🔗 Copiar link de invitación"}
       </button>
+
+      <form onSubmit={handleAgregar} className="flex gap-2 mb-6">
+        <input
+          type="text"
+          value={nuevoNombre}
+          onChange={(e) => setNuevoNombre(e.target.value)}
+          placeholder="Nombre del jugador"
+          maxLength={50}
+          className="flex-1 bg-[var(--superficie)] text-[var(--texto)] rounded-xl px-4 py-3 border border-[var(--texto)]/10 focus:border-[var(--primario)] outline-none transition-colors text-sm"
+        />
+        <button
+          type="submit"
+          disabled={!nuevoNombre.trim()}
+          className="bg-[var(--primario)] text-[var(--fondo)] font-semibold px-5 py-3 rounded-xl hover:brightness-110 transition-all disabled:opacity-50 text-sm whitespace-nowrap"
+        >
+          Agregar
+        </button>
+      </form>
 
       <div className="flex gap-2 mb-6">
         {partido.estado !== "cerrado" ? (
