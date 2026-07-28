@@ -1,23 +1,10 @@
 "use server";
 
-import { randomBytes } from "node:crypto";
 import { revalidatePath } from "next/cache";
 
 import { createClient } from "@/lib/supabase/server";
 import { esUuid, fallo, falloDe, organizadorActual } from "@/lib/auth-guard";
-
-// Sin l/1/0/o para que el link sea dictable por teléfono.
-const ALFABETO = "abcdefghijkmnpqrstuvwxyz23456789";
-
-function generarSlug(): string {
-  const bytes = randomBytes(10);
-  let slug = "";
-  for (let i = 0; i < 10; i++) {
-    // 256 % 32 === 0 -> sin sesgo de módulo.
-    slug += ALFABETO[bytes[i] % ALFABETO.length];
-  }
-  return slug;
-}
+import { generarSlug } from "@/lib/validaciones";
 
 export async function crearPartido(input: {
   fechaHora: string;

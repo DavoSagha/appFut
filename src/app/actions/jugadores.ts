@@ -8,6 +8,7 @@ import {
   esUuid,
   fallo,
   falloDe,
+  normalizarNombre,
   organizadorActual,
   usuarioActual,
 } from "@/lib/auth-guard";
@@ -138,7 +139,7 @@ export type AccionUnirse =
 export async function unirsePartido(slug: string, nombreCrudo: string) {
   if (!esSlug(slug)) return fallo("Link inválido");
 
-  const nombre = String(nombreCrudo ?? "").trim().replace(/\s+/g, " ");
+  const nombre = normalizarNombre(nombreCrudo);
   if (nombre.length < 2) return fallo("Escribí tu nombre");
   if (nombre.length > NOMBRE_MAX_LARGO) return fallo("El nombre es demasiado largo");
 

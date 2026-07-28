@@ -58,13 +58,5 @@ export async function organizadorActual(): Promise<string | null> {
   return u && !u.esAnonimo ? u.id : null;
 }
 
-export function esUuid(v: unknown): v is string {
-  return (
-    typeof v === "string" &&
-    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
-  );
-}
-
-export function esSlug(v: unknown): v is string {
-  return typeof v === "string" && /^[a-z0-9]{6,16}$/.test(v);
-}
+// Definidos en @/lib/validaciones (sin "server-only") para poder testearlos.
+export { esUuid, esSlug, normalizarNombre } from "@/lib/validaciones";
