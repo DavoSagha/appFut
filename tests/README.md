@@ -24,7 +24,20 @@ comprobantes de verdad.
 
 ## Node
 
-Mínimo **20.9** (lo pide Next 16). **Recomendado: 22 LTS.**
+La versión del equipo está clavada en **`.nvmrc` → 22**.
+
+`engines` en package.json dice `>=20.9.0`, que es otra cosa y está bien que
+no coincidan: `engines` es el piso que el proyecto tolera, `.nvmrc` es la
+versión con la que trabajamos. Una es compatibilidad, la otra es acuerdo.
+
+```bash
+nvm use     # o: fnm use
+```
+
+> **En Windows**: `nvm-windows` **no lee `.nvmrc`** — es una limitación
+> conocida, `nvm use` a secas ahí no hace nada. Si están en Windows, usen
+> [`fnm`](https://github.com/Schniz/fnm) o `nvs`, que sí lo respetan. Con
+> nvm-windows hay que escribir la versión a mano: `nvm use 22`.
 
 Dos cosas dependen de esto:
 
