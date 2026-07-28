@@ -13,12 +13,13 @@ import {
   usuarioActual,
 } from "@/lib/auth-guard";
 import { EMOJIS, NOMBRE_MAX_LARGO } from "@/lib/constants";
-import type { PagoEstado, PartidoEstado, JugadorRol } from "@/lib/db/types";
+import type { PagoEstado, PartidoEstado, JugadorRol, Equipo } from "@/lib/db/types";
 
 export type JugadorPublico = {
   id: string;
   nombre: string;
   rol: JugadorRol;
+  equipo: Equipo;
   emoji: string | null;
   pagoEstado: PagoEstado | null;
 };
@@ -36,6 +37,7 @@ export type VistaPartido = {
     id: string;
     nombre: string;
     rol: JugadorRol;
+    equipo: Equipo;
     emoji: string | null;
     montoEsperado: number;
     pagoEstado: PagoEstado;
@@ -54,6 +56,7 @@ type FilaRoster = {
   id: string;
   nombre: string;
   rol: JugadorRol;
+  equipo: Equipo | null;
   emoji_o_color: string | null;
   pago_estado: PagoEstado | null;
   es_mio: boolean;
@@ -101,6 +104,7 @@ export async function obtenerVistaPartido(slug: string) {
       id: mio.id,
       nombre: mio.nombre,
       rol: mio.rol,
+      equipo: mio.equipo ?? null,
       emoji: mio.emoji_o_color,
       montoEsperado: pago?.monto_esperado ?? 0,
       pagoEstado: (pago?.estado as PagoEstado) ?? "sin_declarar",
@@ -120,6 +124,7 @@ export async function obtenerVistaPartido(slug: string) {
       id: j.id,
       nombre: j.nombre,
       rol: j.rol,
+      equipo: j.equipo ?? null,
       emoji: j.emoji_o_color,
       pagoEstado: j.pago_estado,
     })),
@@ -277,5 +282,106 @@ export async function agregarJugador(partidoId: string, nombreCrudo: string) {
   }
 
   revalidatePath(`/organizador/${partidoId}`);
+  return { ok: true as const };
+}
+
+/** Un jugador elige a qué equipo unirse, o vuelve a reserva. */
+export async function cambiarEquipo(slug: string, equipo: "team1" | "team2" | null) {
+  if (!esSlug(slug)) return fallo("Link inválido");
+
+  const usuario = await usuarioActual();
+  if (!usuario) return fallo("No estás anotado en este partido");
+
+  const supabase = await createClient();
+
+  const { data: rawPartido } = await supabase.rpc("partido_por_slug", {
+    p_slug: slug,
+  });
+
+  const p = (rawPartido as { id: string; cantidad_jugadores: number }[] | null)?.[0];
+  if (!p) return fallo("Partido no encontrado");
+
+  const jugadorActual = await supabase
+    .from("jugadores")
+    .select("id, equipo, user_id")
+    .eq("partido_id", p.id)
+    .eq("user_id", usuario.id)
+    .single();
+
+  if (!jugadorActual.data) return fallo("No estás anotado en este partido");
+
+  // Si está eligiendo un equipo, verificar cupo
+  if (equipo) {
+    const maxPorEquipo = p.cantidad_jugadores / 2;
+    const { count } = await supabase
+      .from("jugadores")
+      .select("id", { count: "exact", head: true })
+      .eq("partido_id", p.id)
+      .eq("equipo", equipo);
+
+    if (count !== null && count >= maxPorEquipo) {
+      return fallo(`El equipo ${equipo === "team1" ? "1" : "2"} está completo`);
+    }
+  }
+
+  const nuevoRol = equipo ? "titular" : "suplente";
+  const { error } = await supabase
+    .from("jugadores")
+    .update({ equipo, rol: nuevoRol })
+    .eq("id", jugadorActual.data.id);
+
+  if (error) return falloDe("cambiarEquipo", error);
+
+  revalidatePath(`/p/${slug}`);
+  return { ok: true as const };
+}
+
+/** El organizador mueve a cualquier jugador a un equipo o a reserva. */
+export async function moverJugador(jugadorId: string, equipo: "team1" | "team2" | null) {
+  if (!esUuid(jugadorId)) return fallo("Jugador inválido");
+
+  const userId = await organizadorActual();
+  if (!userId) return fallo("Sesión expirada. Volvé a iniciar sesión.");
+
+  const supabase = await createClient();
+
+  const jugador = await supabase
+    .from("jugadores")
+    .select("id, partido_id, equipo")
+    .eq("id", jugadorId)
+    .single();
+
+  if (!jugador.data) return fallo("Jugador no encontrado");
+
+  const { data: partido } = await supabase
+    .from("partidos")
+    .select("cantidad_jugadores")
+    .eq("id", jugador.data.partido_id)
+    .single();
+
+  if (!partido) return fallo("Partido no encontrado");
+
+  if (equipo) {
+    const maxPorEquipo = partido.cantidad_jugadores / 2;
+    const { count } = await supabase
+      .from("jugadores")
+      .select("id", { count: "exact", head: true })
+      .eq("partido_id", jugador.data.partido_id)
+      .eq("equipo", equipo);
+
+    if (count !== null && count >= maxPorEquipo) {
+      return fallo(`El equipo ${equipo === "team1" ? "1" : "2"} está completo`);
+    }
+  }
+
+  const nuevoRol = equipo ? "titular" : "suplente";
+  const { error } = await supabase
+    .from("jugadores")
+    .update({ equipo, rol: nuevoRol })
+    .eq("id", jugadorId);
+
+  if (error) return falloDe("moverJugador", error);
+
+  revalidatePath(`/organizador/${jugador.data.partido_id}`);
   return { ok: true as const };
 }

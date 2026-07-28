@@ -174,7 +174,7 @@ export default function UnirsePage() {
                     {j.emoji && <span className="mr-2">{j.emoji}</span>}
                     {j.nombre}
                     <span className="text-[var(--texto)]/40 text-xs ml-2">
-                      {j.rol === "titular" ? "Titular" : "Suplente"}
+                      {j.equipo === "team1" ? "Team 1" : j.equipo === "team2" ? "Team 2" : "Reserva"}
                     </span>
                   </div>
                 ))}

@@ -43,7 +43,6 @@ export async function declararPagoSinComprobante(slug: string) {
     .single();
 
   if (!jugador) return fallo("No estás anotado en este partido");
-  if (jugador.rol !== "titular") return fallo("Los suplentes no pagan");
 
   const { data: pagoActual } = await supabase
     .from("pagos")
@@ -103,7 +102,6 @@ export async function subirComprobante(slug: string, formData: FormData) {
     .single();
 
   if (!jugador) return fallo("No estás anotado en este partido");
-  if (jugador.rol !== "titular") return fallo("Los suplentes no pagan");
 
   const { data: pagoActual } = await supabase
     .from("pagos")
@@ -115,7 +113,6 @@ export async function subirComprobante(slug: string, formData: FormData) {
     return fallo("Tu pago ya está confirmado");
   }
 
-  // La extensión sale del MIME verificado, nunca de file.name.
   const ext = EXTENSION_POR_MIME[archivo.type] ?? "jpg";
   const ruta = `${p.id}/${jugador.id}/comprobante.${ext}`;
 

@@ -1,5 +1,7 @@
 /** Emojis que puede elegir un jugador. El servidor valida contra esta lista. */
 export const EMOJIS = [
+  "🏳️‍🌈",
+  "⚧️",
   "⚡",
   "🔥",
   "💪",

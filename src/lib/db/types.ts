@@ -1,5 +1,6 @@
 export type PartidoEstado = "abierto" | "completo" | "cerrado";
 export type JugadorRol = "titular" | "suplente";
+export type Equipo = "team1" | "team2" | null;
 export type PagoEstado =
   | "sin_declarar"
   | "pendiente_confirmacion"
@@ -21,9 +22,9 @@ export interface Jugador {
   id: string;
   partido_id: string;
   nombre: string;
-  /** Usuario anónimo de Supabase. Reemplazó al device_id de localStorage. */
   user_id: string;
   rol: JugadorRol;
+  equipo: Equipo;
   emoji_o_color: string | null;
   orden_ingreso: number;
   created_at: string;

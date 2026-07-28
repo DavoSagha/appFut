@@ -34,3 +34,6 @@ next-env.d.ts
 # pwa
 public/sw.js
 public/workbox-*.js
+
+#supabase
+/supabase

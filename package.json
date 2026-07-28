@@ -16,7 +16,10 @@
     "test:watch": "vitest",
     "db:start": "supabase start -x studio,imgproxy,edge-runtime,logflare,vector,mailpit,realtime,supavisor",
     "db:reset": "supabase db reset",
-    "db:stop": "supabase stop"
+    "db:stop": "supabase stop",
+    "env:local": "powershell Copy-Item -Path .env.development -Destination .env.local -Force",
+    "env:prod": "powershell Copy-Item -Path .env.prod.local -Destination .env.local -Force",
+    "env:status": "powershell Write-Host \"Actual: $(if(Test-Path .env.local){Get-Content .env.local | Select-String 'NEXT_PUBLIC_SUPABASE_URL' | ForEach-Object {$_ -replace '.*=', ''}}else{'ninguno'})\""
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.3",
