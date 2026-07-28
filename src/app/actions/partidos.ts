@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { esUuid, fallo, falloDe, organizadorActual } from "@/lib/auth-guard";
 import { generarSlug } from "@/lib/validaciones";
+import { eliminarPartidoConResiduos } from "@/lib/borrado";
 
 export async function crearPartido(input: {
   fechaHora: string;
@@ -84,4 +85,29 @@ export async function cerrarPartido(partidoId: string) {
 
 export async function reabrirPartido(partidoId: string) {
   return cambiarEstado(partidoId, "abierto");
+}
+
+/** Borra un partido ya jugado, sin dejar residuos ni en la base ni en Storage. */
+export async function eliminarPartido(partidoId: string) {
+  if (!esUuid(partidoId)) return fallo("Partido inválido");
+
+  const userId = await organizadorActual();
+  if (!userId) return fallo("Sesión expirada. Volvé a iniciar sesión.");
+
+  const supabase = await createClient();
+  const res = await eliminarPartidoConResiduos(supabase, partidoId);
+
+  if (!res.ok) {
+    switch (res.motivo) {
+      case "todavia_no_jugado":
+        return fallo("Solo se puede eliminar un partido después de jugado");
+      case "sin_permiso":
+        return fallo("No tenés permiso para eliminar este partido");
+      default:
+        return falloDe(`eliminarPartido/${res.motivo}`, res.causa);
+    }
+  }
+
+  revalidatePath("/organizador");
+  return { ok: true as const };
 }

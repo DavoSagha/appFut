@@ -111,13 +111,16 @@ export async function crearPartido(opts: {
   organizadorId: string;
   cupo?: number;
   costo?: number;
+  /** true = el partido ya se jugó (fecha en el pasado). */
+  jugado?: boolean;
 }): Promise<{ id: string; slug: string }> {
   const slug = slugDeTest();
+  const desplazamiento = opts.jugado ? -86_400_000 : 86_400_000;
   const { data, error } = await admin()
     .from("partidos")
     .insert({
       organizador_id: opts.organizadorId,
-      fecha_hora: new Date(Date.now() + 86_400_000).toISOString(),
+      fecha_hora: new Date(Date.now() + desplazamiento).toISOString(),
       cantidad_jugadores: opts.cupo ?? 2,
       costo_total: opts.costo ?? 1000,
       link_slug: slug,

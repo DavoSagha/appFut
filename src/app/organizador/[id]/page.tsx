@@ -4,7 +4,11 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/client";
-import { cerrarPartido, reabrirPartido } from "@/app/actions/partidos";
+import {
+  cerrarPartido,
+  reabrirPartido,
+  eliminarPartido,
+} from "@/app/actions/partidos";
 import { agregarJugador, eliminarJugador } from "@/app/actions/jugadores";
 import { confirmarPago, rechazarPago, verComprobante } from "@/app/actions/pagos";
 import type { Partido, JugadorRol, PagoEstado } from "@/lib/db/types";
@@ -119,6 +123,21 @@ export default function PartidoDetailPage() {
     setNuevoNombre("");
   };
 
+  const handleEliminarPartido = async () => {
+    const aviso =
+      "Se elimina el partido, todos los jugadores y los comprobantes subidos.\n\n" +
+      "Esto no se puede deshacer. ¿Seguís?";
+    if (!confirm(aviso)) return;
+
+    setError("");
+    const res = await eliminarPartido(id);
+    if (!res.ok) {
+      setError(res.error);
+      return;
+    }
+    router.replace("/organizador");
+  };
+
   const handleVerComprobante = async (jugadorId: string) => {
     setError("");
     const res = await verComprobante(jugadorId);
@@ -157,6 +176,7 @@ export default function PartidoDetailPage() {
   );
 
   const porEquipo = partido.cantidad_jugadores / 2;
+  const yaSeJugo = new Date(partido.fecha_hora) < new Date();
 
   return (
     <div className="min-h-screen px-4 py-6 max-w-lg mx-auto">
@@ -322,6 +342,21 @@ export default function PartidoDetailPage() {
         {Math.max(0, partido.cantidad_jugadores - titulares.length)} cupos
         titulares libres
       </div>
+
+      {/* Solo después de jugado: antes hay gente anotada y pagos en curso. */}
+      {yaSeJugo && (
+        <div className="border-t border-red-500/20 mt-4 pt-6">
+          <button
+            onClick={handleEliminarPartido}
+            className="w-full text-red-400/80 text-sm py-3 rounded-xl border border-red-500/20 hover:text-red-400 hover:bg-red-500/5 transition-all"
+          >
+            Eliminar partido definitivamente
+          </button>
+          <p className="text-[var(--texto)]/30 text-xs text-center mt-2">
+            Borra el partido, los jugadores y los comprobantes subidos.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

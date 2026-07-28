@@ -15,14 +15,36 @@ npm test             # Todo.
    migraciones en orden
 3. `npm run test:int`
 
-`db:start` excluye studio, realtime, storage, edge-runtime y el stack de
-analytics (`vector`/`logflare`). No hacen falta para los tests, tardan en
-levantar, y en Windows el de analytics falla el health check y se lleva
-puesta toda la corrida.
+`db:start` excluye studio, realtime, edge-runtime y el stack de analytics
+(`vector`/`logflare`). No hacen falta, tardan en levantar, y en Windows el
+de analytics falla el health check y se lleva puesta toda la corrida.
 
-**Node 20**: `tests/setup.ts` mete un polyfill de `WebSocket` (llegó nativo
-recién en Node 22). Sin eso, `createClient()` de supabase-js explota antes
-de correr un solo test, aunque nunca se use Realtime.
+**Storage sí queda levantado**: los tests de borrado suben y verifican
+comprobantes de verdad.
+
+## Node
+
+Mínimo **20.9** (lo pide Next 16). **Recomendado: 22 LTS.**
+
+Dos cosas dependen de esto:
+
+- `tests/setup.ts` mete un polyfill de `WebSocket`, que llegó nativo recién
+  en Node 22. Sin eso, `createClient()` de supabase-js explota antes de
+  correr un solo test, aunque nunca se use Realtime.
+- El config se llama `vitest.config.**mts**`, no `.ts`, a propósito. Con
+  `.ts`, vitest lo carga por su puente CommonJS y termina haciendo
+  `require()` de un módulo ESM de vite. Eso solo funciona desde Node 20.19,
+  y en versiones anteriores revienta con:
+
+  ```
+  Error [ERR_REQUIRE_ESM]: require() of ES Module .../vite/dist/node/index.js
+  ```
+
+  La extensión `.mts` fuerza la carga como ESM y el problema desaparece en
+  cualquier versión. **No lo renombres a `.ts`.**
+
+Además, supabase-js ya avisa que va a dejar de soportar Node 20. Migrar a 22
+saca ese warning y el polyfill queda al pedo (inofensivo, pero al pedo).
 
 Si algo quedó sucio entre corridas: `npm run db:reset` reaplica todo desde cero.
 
@@ -36,6 +58,7 @@ proyecto remoto ni tu `.env.local`.
 | `unit/validaciones.test.ts` | Lógica pura: validadores, normalización de nombres, generación de slugs |
 | `integration/dominio.test.ts` | Reglas de negocio: roles, montos, promoción de suplentes, estados del partido |
 | `integration/reclamo.test.ts` | Recuperar la ficha escribiendo el mismo nombre |
+| `integration/borrado.test.ts` | Eliminar un partido ya jugado sin dejar residuos (incluye Storage) |
 | `integration/seguridad.test.ts` | **Regresiones de la auditoría.** Cada test es un agujero que ya existió |
 
 ## Sobre `seguridad.test.ts`
