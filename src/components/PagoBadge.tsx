@@ -20,7 +20,7 @@ export default function PagoBadge({ estado, onClick }: Props) {
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium min-h-[28px] ${c.bg} ${onClick ? "cursor-pointer hover:brightness-110 active:scale-95 transition-all" : "cursor-default"}`}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium min-h-[28px] shrink-0 whitespace-nowrap ${c.bg} ${onClick ? "cursor-pointer hover:brightness-110 active:scale-95 transition-all" : "cursor-default"}`}
     >
       <span className={`w-1.5 h-1.5 rounded-full ${c.dot}`} />
       {c.label}

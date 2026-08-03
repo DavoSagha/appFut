@@ -16,6 +16,7 @@ import {
 } from "@/app/actions/pagos";
 import { asegurarSesion } from "@/lib/supabase/ensure-session";
 import { EMOJIS } from "@/lib/constants";
+import { montoDisponibleSegunEstado, MENSAJE_MONTO_PENDIENTE } from "@/lib/monto";
 import type { Equipo } from "@/lib/db/types";
 
 import BottomSheet from "@/components/BottomSheet";
@@ -122,11 +123,22 @@ export default function PlayerViewPage() {
         </div>
       </div>
 
+      {partido.resultadoTeam1 != null && partido.resultadoTeam2 != null && (
+        <div className="bg-[var(--superficie)] rounded-xl p-4 mb-6 text-center">
+          <h2 className="text-xs font-semibold text-[var(--texto)]/50 mb-2 uppercase tracking-wider">Resultado final</h2>
+          <p className="text-2xl font-bold text-[var(--texto)]">
+            Team 1 <span className="text-[var(--primario)]">{partido.resultadoTeam1}</span>
+            {" - "}
+            <span className="text-[var(--primario)]">{partido.resultadoTeam2}</span> Team 2
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 gap-3 mb-6">
         <TeamCard nombre="Team 1" jugadores={team1} max={maxPorEquipo} yoId={yo.id}
-          miEquipo={yo.equipo} onElegir={() => handleCambiarEquipo("team1")} />
+          onElegir={() => handleCambiarEquipo("team1")} />
         <TeamCard nombre="Team 2" jugadores={team2} max={maxPorEquipo} yoId={yo.id}
-          miEquipo={yo.equipo} onElegir={() => handleCambiarEquipo("team2")} />
+          onElegir={() => handleCambiarEquipo("team2")} />
       </div>
 
       {reserva.length > 0 && (
@@ -171,7 +183,14 @@ export default function PlayerViewPage() {
            yo.pagoEstado === "pendiente_confirmacion" ? "⏳ Pendiente de confirmación" :
            yo.pagoEstado === "rechazado" ? "❌ Pago rechazado" : "💰 Tu pago"}
         </h2>
-        <p className="text-2xl font-bold text-[var(--primario)] mb-4">${yo.montoEsperado.toFixed(2)}</p>
+        {/* Si todavía no sos titular no pagás nada (0 real, no "pendiente").
+            Si ya sos titular pero el partido sigue armándose, el monto
+            puede cambiar con cada alta: se oculta hasta que esté fijo. */}
+        {yo.equipo && !montoDisponibleSegunEstado(partido.estado) ? (
+          <p className="text-sm text-[var(--texto)]/50 mb-4">{MENSAJE_MONTO_PENDIENTE}</p>
+        ) : (
+          <p className="text-2xl font-bold text-[var(--primario)] mb-4">${yo.montoEsperado.toFixed(2)}</p>
+        )}
 
         {yo.pagoEstado !== "confirmado" && (
           <>
@@ -230,9 +249,11 @@ export default function PlayerViewPage() {
   );
 }
 
-function TeamCard({ nombre, jugadores, max, yoId, miEquipo, onElegir }: {
+// Si estoy en este equipo se deduce de `jugadores` + `yoId` (estoyAca), así
+// que no hace falta pasar miEquipo por separado.
+function TeamCard({ nombre, jugadores, max, yoId, onElegir }: {
   nombre: string; jugadores: VistaPartido["jugadores"]; max: number;
-  yoId: string; miEquipo: Equipo; onElegir: () => void;
+  yoId: string; onElegir: () => void;
 }) {
   const estoyAca = jugadores.some((j) => j.id === yoId);
   return (

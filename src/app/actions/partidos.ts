@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { createClient } from "@/lib/supabase/server";
 import { esUuid, fallo, falloDe, organizadorActual } from "@/lib/auth-guard";
-import { generarSlug } from "@/lib/validaciones";
+import { generarSlug, validarFechaPartido, validarResultado } from "@/lib/validaciones";
 import { eliminarPartidoConResiduos } from "@/lib/borrado";
 
 export async function crearPartido(input: {
@@ -15,8 +15,9 @@ export async function crearPartido(input: {
   const userId = await organizadorActual();
   if (!userId) return fallo("Sesión expirada. Volvé a iniciar sesión.");
 
+  const validacionFecha = validarFechaPartido(input.fechaHora);
+  if (!validacionFecha.ok) return fallo(validacionFecha.error);
   const fecha = new Date(input.fechaHora);
-  if (Number.isNaN(fecha.getTime())) return fallo("Fecha u hora inválida");
 
   const cupo = Number(input.cantidadJugadores);
   if (!Number.isInteger(cupo) || cupo < 2 || cupo > 30) {
@@ -85,6 +86,40 @@ export async function cerrarPartido(partidoId: string) {
 
 export async function reabrirPartido(partidoId: string) {
   return cambiarEstado(partidoId, "abierto");
+}
+
+/** Carga o corrige el resultado final. Sólo el organizador; RLS ya lo limita a su propio partido. */
+export async function guardarResultado(
+  partidoId: string,
+  team1: number,
+  team2: number,
+) {
+  if (!esUuid(partidoId)) return fallo("Partido inválido");
+
+  const validacion = validarResultado(team1, team2);
+  if (!validacion.ok) return fallo(validacion.error);
+
+  const userId = await organizadorActual();
+  if (!userId) return fallo("Sesión expirada. Volvé a iniciar sesión.");
+
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("partidos")
+    .update({
+      resultado_team1: validacion.team1,
+      resultado_team2: validacion.team2,
+    })
+    .eq("id", partidoId)
+    .select("id");
+
+  if (error) return falloDe("guardarResultado", error);
+  if (!data || data.length === 0) {
+    return fallo("No tenés permiso sobre este partido");
+  }
+
+  revalidatePath(`/organizador/${partidoId}`);
+  return { ok: true as const };
 }
 
 /** Borra un partido ya jugado, sin dejar residuos ni en la base ni en Storage. */

@@ -10,121 +10,135 @@ import {
   admin,
 } from "./_entorno";
 
-/**
- * Las reglas de negocio viven en triggers de Postgres. Son el corazón del
- * producto y donde estuvieron TODOS los bugs. Esto las ejerce de verdad.
- */
-
-let orgId: string;
+let org: Awaited<ReturnType<typeof organizador>>;
 
 beforeAll(async () => {
-  orgId = (await organizador()).id;
+  org = await organizador();
 });
 
-describe("asignación de roles", () => {
-  it("el primero que llega es titular", async () => {
-    const { slug } = await crearPartido({ organizadorId: orgId, cupo: 2 });
+async function guardarEquipos(
+  partidoId: string,
+  cambios: Array<{ jugador_id: string; equipo: "team1" | "team2" | null }>,
+) {
+  const partido = await leerPartido(partidoId);
+  const { error } = await org.cliente.rpc("guardar_equipos_partido", {
+    p_partido_id: partidoId,
+    p_cambios: cambios,
+    p_expected_version: Number(partido?.roster_version),
+  });
+  if (error) throw new Error(`guardar_equipos_partido falló: ${error.message}`);
+}
+
+describe("equipos y roles", () => {
+  it("un alta nueva sin equipo entra a Reserva como suplente y no paga", async () => {
+    const { id, slug } = await crearPartido({
+      organizadorId: org.id,
+      cupo: 2,
+      costo: 1000,
+    });
     const { fichaId, accion } = await anotarse(slug, "Primero");
 
     expect(accion).toBe("creada");
-    expect((await leerFicha(fichaId))?.rol).toBe("titular");
+    expect(await leerFicha(fichaId)).toMatchObject({ rol: "suplente", equipo: null });
+    expect(Number((await leerPago(fichaId))?.monto_esperado)).toBe(0);
+    expect((await leerPartido(id))?.estado).toBe("abierto");
   });
 
-  it("una vez lleno el cupo, los que siguen entran de suplentes", async () => {
-    const { slug } = await crearPartido({ organizadorId: orgId, cupo: 2 });
+  it("confirma los equipos de forma atómica y recién entonces completa", async () => {
+    const { id, slug } = await crearPartido({
+      organizadorId: org.id,
+      cupo: 2,
+      costo: 1000,
+    });
+    const uno = await anotarse(slug, "Uno");
+    const dos = await anotarse(slug, "Dos");
 
-    const a = await anotarse(slug, "Titular A");
-    const b = await anotarse(slug, "Titular B");
-    const c = await anotarse(slug, "Suplente C");
+    await guardarEquipos(id, [
+      { jugador_id: uno.fichaId, equipo: "team1" },
+      { jugador_id: dos.fichaId, equipo: "team2" },
+    ]);
 
-    expect((await leerFicha(a.fichaId))?.rol).toBe("titular");
-    expect((await leerFicha(b.fichaId))?.rol).toBe("titular");
-    expect((await leerFicha(c.fichaId))?.rol).toBe("suplente");
-  });
-
-  it("el partido pasa a 'completo' cuando se llena el cupo", async () => {
-    const { id, slug } = await crearPartido({ organizadorId: orgId, cupo: 2 });
-
-    expect((await leerPartido(id))?.estado).toBe("abierto");
-    await anotarse(slug, "Uno");
-    expect((await leerPartido(id))?.estado).toBe("abierto");
-    await anotarse(slug, "Dos");
+    expect(await leerFicha(uno.fichaId)).toMatchObject({ rol: "titular", equipo: "team1" });
+    expect(await leerFicha(dos.fichaId)).toMatchObject({ rol: "titular", equipo: "team2" });
+    expect(Number((await leerPago(uno.fichaId))?.monto_esperado)).toBe(500);
+    expect(Number((await leerPago(dos.fichaId))?.monto_esperado)).toBe(500);
     expect((await leerPartido(id))?.estado).toBe("completo");
   });
 
+  it("rechaza equipo y rol incompatibles pero permite otras columnas", async () => {
+    const { slug } = await crearPartido({ organizadorId: org.id });
+    const ficha = await anotarse(slug, "Coherente");
+
+    const invalido = await admin()
+      .from("jugadores")
+      .update({ rol: "titular" })
+      .eq("id", ficha.fichaId);
+    expect(invalido.error).toBeTruthy();
+
+    const permitido = await admin()
+      .from("jugadores")
+      .update({ nombre: "Coherente Editado" })
+      .eq("id", ficha.fichaId);
+    expect(permitido.error).toBeNull();
+  });
+
   it("cada jugador entra con un orden_ingreso distinto", async () => {
-    const { id, slug } = await crearPartido({ organizadorId: orgId, cupo: 4 });
-    for (const n of ["Ana", "Beto", "Caro", "Dani"]) await anotarse(slug, n);
+    const { id, slug } = await crearPartido({ organizadorId: org.id, cupo: 4 });
+    for (const nombre of ["Ana", "Beto", "Caro", "Dani"]) {
+      await anotarse(slug, nombre);
+    }
 
     const { data } = await admin()
       .from("jugadores")
       .select("orden_ingreso")
       .eq("partido_id", id);
-
-    const ordenes = (data ?? []).map((j) => j.orden_ingreso);
+    const ordenes = (data ?? []).map((jugador) => jugador.orden_ingreso);
     expect(new Set(ordenes).size).toBe(ordenes.length);
+  });
+
+  it("rechaza un snapshot viejo sin pisar un cambio concurrente", async () => {
+    const { id, slug } = await crearPartido({
+      organizadorId: org.id,
+      cupo: 4,
+    });
+    const primero = await anotarse(slug, "Snapshot Uno");
+    const versionLeida = Number((await leerPartido(id))?.roster_version);
+
+    const renombrado = await primero.cliente
+      .from("jugadores")
+      .update({ nombre: "Snapshot Renombrado" })
+      .eq("id", primero.fichaId);
+    expect(renombrado.error).toBeNull();
+    expect(Number((await leerPartido(id))?.roster_version)).toBe(versionLeida);
+
+    await anotarse(slug, "Cambio Concurrente");
+    const { error } = await org.cliente.rpc("guardar_equipos_partido", {
+      p_partido_id: id,
+      p_cambios: [{ jugador_id: primero.fichaId, equipo: "team1" }],
+      p_expected_version: versionLeida,
+    });
+
+    expect(error?.message).toContain("ROSTER_STALE");
+    expect(await leerFicha(primero.fichaId)).toMatchObject({
+      equipo: null,
+      rol: "suplente",
+    });
   });
 });
 
-describe("cálculo del monto esperado", () => {
-  it("el PRIMER titular NO queda en cero", async () => {
-    // Regresión: calcular_pago_esperado corría en un BEFORE INSERT, así que
-    // contaba titulares sin la fila nueva. El primero quedaba en $0.
-    const { slug } = await crearPartido({
-      organizadorId: orgId,
-      cupo: 2,
-      costo: 1000,
-    });
-    const { fichaId } = await anotarse(slug, "Solo");
-
-    expect(Number((await leerPago(fichaId))?.monto_esperado)).toBe(1000);
-  });
-
-  it("al entrar un titular nuevo, a TODOS les baja el monto", async () => {
-    // Regresión: los montos de los ya anotados no se recalculaban nunca.
-    // Cada uno quedaba con el divisor del momento en que entró.
-    const { slug } = await crearPartido({
-      organizadorId: orgId,
+describe("pagos al confirmar equipos", () => {
+  it("recalcula sólo pagos no confirmados cuando cambia el divisor", async () => {
+    const { id, slug } = await crearPartido({
+      organizadorId: org.id,
       cupo: 4,
       costo: 1200,
     });
-
     const a = await anotarse(slug, "Ana");
-    expect(Number((await leerPago(a.fichaId))?.monto_esperado)).toBe(1200);
-
     const b = await anotarse(slug, "Beto");
-    expect(Number((await leerPago(a.fichaId))?.monto_esperado)).toBe(600);
-    expect(Number((await leerPago(b.fichaId))?.monto_esperado)).toBe(600);
-
-    const c = await anotarse(slug, "Caro");
-    expect(Number((await leerPago(a.fichaId))?.monto_esperado)).toBe(400);
-    expect(Number((await leerPago(c.fichaId))?.monto_esperado)).toBe(400);
-  });
-
-  it("el suplente no paga", async () => {
-    const { slug } = await crearPartido({
-      organizadorId: orgId,
-      cupo: 2,
-      costo: 1000,
-    });
-    await anotarse(slug, "T1");
-    await anotarse(slug, "T2");
-    const sup = await anotarse(slug, "Sup");
-
-    expect(Number((await leerPago(sup.fichaId))?.monto_esperado)).toBe(0);
-  });
-
-  it("un pago confirmado NO se recalcula cuando cambia el divisor", async () => {
-    // Regresión: se pisaba monto_esperado de pagos ya confirmados, y el
-    // dashboard mostraba plata que nunca entró.
-    const { slug } = await crearPartido({
-      organizadorId: orgId,
-      cupo: 4,
-      costo: 1200,
-    });
-
-    const a = await anotarse(slug, "Pagador");
-    await anotarse(slug, "Otro"); // ahora son 600 c/u
+    await guardarEquipos(id, [
+      { jugador_id: a.fichaId, equipo: "team1" },
+      { jugador_id: b.fichaId, equipo: "team2" },
+    ]);
 
     await admin()
       .from("pagos")
@@ -132,75 +146,43 @@ describe("cálculo del monto esperado", () => {
       .eq("jugador_id", a.fichaId);
     await admin()
       .from("pagos")
-      .update({ estado: "confirmado", confirmado_por: orgId })
+      .update({ estado: "confirmado", confirmado_por: org.id })
       .eq("jugador_id", a.fichaId);
 
-    const antes = await leerPago(a.fichaId);
-    expect(antes?.estado).toBe("confirmado");
-    expect(Number(antes?.monto_pagado)).toBe(600);
+    const c = await anotarse(slug, "Caro");
+    await guardarEquipos(id, [{ jugador_id: c.fichaId, equipo: "team1" }]);
 
-    await anotarse(slug, "Tercero"); // el divisor cambia a 400
-
-    const despues = await leerPago(a.fichaId);
-    expect(Number(despues?.monto_esperado)).toBe(600);
-    expect(Number(despues?.monto_pagado)).toBe(600);
+    expect(Number((await leerPago(a.fichaId))?.monto_pagado)).toBe(600);
+    expect(Number((await leerPago(a.fichaId))?.monto_esperado)).toBe(600);
+    expect(Number((await leerPago(b.fichaId))?.monto_esperado)).toBe(400);
+    expect(Number((await leerPago(c.fichaId))?.monto_esperado)).toBe(400);
   });
 });
 
 describe("baja de un titular", () => {
-  it("promueve al primer suplente", async () => {
-    // Regresión: sin policy de DELETE esto NUNCA funcionó, y el trigger
-    // AFTER DELETE era código muerto en producción.
-    const { slug } = await crearPartido({ organizadorId: orgId, cupo: 2 });
-
+  it("promueve la primera reserva al equipo liberado", async () => {
+    const { id, slug } = await crearPartido({ organizadorId: org.id, cupo: 2 });
     const t1 = await anotarse(slug, "Titular 1");
-    await anotarse(slug, "Titular 2");
-    const sup = await anotarse(slug, "Suplente");
+    const t2 = await anotarse(slug, "Titular 2");
+    const reserva = await anotarse(slug, "Reserva");
+    await guardarEquipos(id, [
+      { jugador_id: t1.fichaId, equipo: "team1" },
+      { jugador_id: t2.fichaId, equipo: "team2" },
+    ]);
 
-    expect((await leerFicha(sup.fichaId))?.rol).toBe("suplente");
-
-    const { error } = await t1.cliente
-      .from("jugadores")
-      .delete()
-      .eq("id", t1.fichaId);
+    const { error } = await t1.cliente.from("jugadores").delete().eq("id", t1.fichaId);
     expect(error).toBeNull();
-
-    expect(await leerFicha(t1.fichaId)).toBeNull();
-    expect((await leerFicha(sup.fichaId))?.rol).toBe("titular");
-  });
-
-  it("si no hay suplentes, el partido vuelve a 'abierto'", async () => {
-    const { id, slug } = await crearPartido({ organizadorId: orgId, cupo: 2 });
-
-    const t1 = await anotarse(slug, "Uno");
-    await anotarse(slug, "Dos");
-    expect((await leerPartido(id))?.estado).toBe("completo");
-
-    await t1.cliente.from("jugadores").delete().eq("id", t1.fichaId);
-
-    expect((await leerPartido(id))?.estado).toBe("abierto");
-  });
-
-  it("el organizador puede eliminar a cualquier jugador de SU partido", async () => {
-    const org = await organizador();
-    const { slug } = await crearPartido({ organizadorId: org.id, cupo: 2 });
-    const j = await anotarse(slug, "Sacame");
-
-    const { error } = await org.cliente
-      .from("jugadores")
-      .delete()
-      .eq("id", j.fichaId);
-
-    expect(error).toBeNull();
-    expect(await leerFicha(j.fichaId)).toBeNull();
+    expect(await leerFicha(reserva.fichaId)).toMatchObject({
+      rol: "titular",
+      equipo: "team1",
+    });
   });
 });
 
 describe("partido cerrado", () => {
   it("no se puede entrar", async () => {
-    const { id, slug } = await crearPartido({ organizadorId: orgId, cupo: 4 });
+    const { id, slug } = await crearPartido({ organizadorId: org.id, cupo: 4 });
     await admin().from("partidos").update({ estado: "cerrado" }).eq("id", id);
-
     await expect(anotarse(slug, "Tarde")).rejects.toThrow(/cerrado/i);
   });
 });

@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import {
-  obtenerVistaPartido,
+  obtenerResumenUnirse,
   unirsePartido,
-  type VistaPartido,
+  type ResumenUnirse,
 } from "@/app/actions/jugadores";
 import { asegurarSesion } from "@/lib/supabase/ensure-session";
 import { NOMBRE_MAX_LARGO } from "@/lib/constants";
@@ -16,7 +16,7 @@ export default function UnirsePage() {
   const router = useRouter();
 
   const [cargando, setCargando] = useState(true);
-  const [vista, setVista] = useState<VistaPartido | null>(null);
+  const [resumen, setResumen] = useState<ResumenUnirse | null>(null);
   const [nombre, setNombre] = useState("");
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
@@ -35,7 +35,7 @@ export default function UnirsePage() {
         return;
       }
 
-      const res = await obtenerVistaPartido(slug);
+      const res = await obtenerResumenUnirse(slug);
       if (cancelado) return;
 
       if (!res.ok) {
@@ -45,7 +45,7 @@ export default function UnirsePage() {
       }
 
       // La cookie firmada ya nos identifica: no hace falta preguntar nada.
-      if (res.data.yo) {
+      if (res.data.yaUnido) {
         router.replace(`/p/${slug}`);
         return;
       }
@@ -54,7 +54,7 @@ export default function UnirsePage() {
         setError("Este partido ya está cerrado");
       }
 
-      setVista(res.data);
+      setResumen(res.data);
       setCargando(false);
     })();
 
@@ -88,7 +88,7 @@ export default function UnirsePage() {
     );
   }
 
-  if (!vista) {
+  if (!resumen) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen px-6">
         <div className="text-5xl mb-4">🚫</div>
@@ -99,8 +99,9 @@ export default function UnirsePage() {
     );
   }
 
-  const { partido, jugadores } = vista;
+  const { partido, anotados } = resumen;
   const cerrado = partido.estado === "cerrado";
+  const completo = partido.estado === "completo";
   const porEquipo = partido.cantidadJugadores / 2;
 
   return (
@@ -160,31 +161,17 @@ export default function UnirsePage() {
             </button>
           </form>
 
-          {jugadores.length > 0 && (
-            <div className="mt-8">
-              <p className="text-[var(--texto)]/50 text-xs text-center mb-3">
-                Ya anotados ({jugadores.length})
-              </p>
-              <div className="space-y-2">
-                {jugadores.map((j) => (
-                  <div
-                    key={j.id}
-                    className="w-full bg-[var(--superficie)] text-[var(--texto)]/70 py-2 px-4 rounded-xl text-center text-sm"
-                  >
-                    {j.emoji && <span className="mr-2">{j.emoji}</span>}
-                    {j.nombre}
-                    <span className="text-[var(--texto)]/40 text-xs ml-2">
-                      {j.equipo === "team1" ? "Team 1" : j.equipo === "team2" ? "Team 2" : "Reserva"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-              <p className="text-[var(--texto)]/40 text-xs text-center mt-4">
-                ¿Perdiste la sesión? Volvé a anotarte con tu mismo nombre
-                y recuperás tu lugar.
-              </p>
-            </div>
-          )}
+          {/* Solo el cupo, nunca la lista de nombres: eso se ve una vez adentro. */}
+          <div className="mt-8 text-center">
+            <p className="text-[var(--texto)]/50 text-xs">
+              {anotados} anotados
+              {completo && " · plantel titular completo, te anotás en reserva"}
+            </p>
+            <p className="text-[var(--texto)]/40 text-xs mt-3">
+              ¿Perdiste la sesión? Volvé a anotarte con tu mismo nombre
+              y recuperás tu lugar.
+            </p>
+          </div>
         </div>
       )}
     </div>

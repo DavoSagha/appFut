@@ -182,6 +182,36 @@ export async function confirmarPago(jugadorId: string) {
   return { ok: true as const };
 }
 
+/** Deshace una confirmación por error: Pagado -> Sin pagar. Reversible, no destructivo con el comprobante. */
+export async function revertirPago(jugadorId: string) {
+  if (!esUuid(jugadorId)) return fallo("Jugador inválido");
+
+  const userId = await organizadorActual();
+  if (!userId) return fallo("Sesión expirada. Volvé a iniciar sesión.");
+
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("pagos")
+    .update({
+      estado: "sin_declarar",
+      monto_pagado: null,
+      confirmado_por: null,
+      confirmado_at: null,
+    })
+    .eq("jugador_id", jugadorId)
+    .eq("estado", "confirmado")
+    .select("id");
+
+  if (error) return falloDe("revertirPago", error);
+  if (!data || data.length === 0) {
+    return fallo("El pago no está confirmado");
+  }
+
+  revalidatePath("/organizador");
+  return { ok: true as const };
+}
+
 export async function rechazarPago(jugadorId: string) {
   if (!esUuid(jugadorId)) return fallo("Jugador inválido");
 

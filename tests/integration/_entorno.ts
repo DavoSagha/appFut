@@ -153,7 +153,7 @@ export async function anotarse(
 export async function leerFicha(fichaId: string) {
   const { data } = await admin()
     .from("jugadores")
-    .select("id, nombre, rol, user_id, partido_id")
+    .select("id, nombre, rol, equipo, user_id, partido_id")
     .eq("id", fichaId)
     .single();
   return data;
@@ -171,7 +171,7 @@ export async function leerPago(fichaId: string) {
 export async function leerPartido(partidoId: string) {
   const { data } = await admin()
     .from("partidos")
-    .select("id, estado, costo_total, cantidad_jugadores")
+    .select("id, estado, costo_total, cantidad_jugadores, roster_version, resultado_team1, resultado_team2")
     .eq("id", partidoId)
     .single();
   return data;

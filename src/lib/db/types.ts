@@ -15,6 +15,9 @@ export interface Partido {
   costo_total: number;
   estado: PartidoEstado;
   link_slug: string;
+  roster_version: number;
+  resultado_team1: number | null;
+  resultado_team2: number | null;
   created_at: string;
 }
 

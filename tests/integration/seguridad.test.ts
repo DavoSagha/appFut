@@ -8,6 +8,7 @@ import {
   jugador,
   leerFicha,
   leerPago,
+  leerPartido,
   admin,
 } from "./_entorno";
 
@@ -18,9 +19,12 @@ import {
  */
 
 let orgId: string;
+let orgCliente: Awaited<ReturnType<typeof organizador>>["cliente"];
 
 beforeAll(async () => {
-  orgId = (await organizador()).id;
+  const org = await organizador();
+  orgId = org.id;
+  orgCliente = org.cliente;
 });
 
 describe("CRÍTICO 1 — anon no tiene acceso directo a las tablas", () => {
@@ -148,8 +152,15 @@ describe("RLS no filtra columnas — lo cubren los triggers", () => {
   });
 
   it("un jugador no puede bajarse el monto a cero", async () => {
-    const { slug } = await crearPartido({ organizadorId: orgId, costo: 800 });
+    const { id, slug } = await crearPartido({ organizadorId: orgId, costo: 800 });
     const j = await anotarse(slug, "Rata");
+    const partido = await leerPartido(id);
+    const { error: errorEquipo } = await orgCliente.rpc("guardar_equipos_partido", {
+      p_partido_id: id,
+      p_cambios: [{ jugador_id: j.fichaId, equipo: "team1" }],
+      p_expected_version: Number(partido?.roster_version),
+    });
+    expect(errorEquipo).toBeNull();
 
     const { error } = await j.cliente
       .from("pagos")
@@ -269,8 +280,15 @@ describe("aislamiento entre jugadores y entre organizadores", () => {
 describe("el organizador sí puede hacer lo suyo", () => {
   it("confirma un pago de su propio partido", async () => {
     const org = await organizador();
-    const { slug } = await crearPartido({ organizadorId: org.id, costo: 600 });
+    const { id, slug } = await crearPartido({ organizadorId: org.id, costo: 600 });
     const j = await anotarse(slug, "Pagador Legit");
+    const partido = await leerPartido(id);
+    const { error: errorEquipo } = await org.cliente.rpc("guardar_equipos_partido", {
+      p_partido_id: id,
+      p_cambios: [{ jugador_id: j.fichaId, equipo: "team1" }],
+      p_expected_version: Number(partido?.roster_version),
+    });
+    expect(errorEquipo).toBeNull();
 
     await j.cliente
       .from("pagos")

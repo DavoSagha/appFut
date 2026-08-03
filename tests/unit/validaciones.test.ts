@@ -5,6 +5,9 @@ import {
   esSlug,
   normalizarNombre,
   generarSlug,
+  validarFechaPartido,
+  validarResultado,
+  ANTICIPACION_MINIMA_HORAS,
   ALFABETO_SLUG,
   LARGO_SLUG,
 } from "@/lib/validaciones";
@@ -64,6 +67,57 @@ describe("normalizarNombre", () => {
   it("no explota con null ni undefined", () => {
     expect(normalizarNombre(null)).toBe("");
     expect(normalizarNombre(undefined)).toBe("");
+  });
+});
+
+describe("validarFechaPartido", () => {
+  const ahora = new Date("2026-08-03T18:00:00.000Z");
+
+  it("rechaza una fecha que ya pasó", () => {
+    expect(validarFechaPartido("2026-08-03T10:00:00.000Z", ahora)).toEqual({
+      ok: false,
+      error: `El partido debe crearse con al menos ${ANTICIPACION_MINIMA_HORAS} horas de anticipación`,
+    });
+  });
+
+  it("rechaza un horario a menos de 2 horas, aunque sea hoy más tarde", () => {
+    expect(validarFechaPartido("2026-08-03T19:00:00.000Z", ahora)).toEqual({
+      ok: false,
+      error: `El partido debe crearse con al menos ${ANTICIPACION_MINIMA_HORAS} horas de anticipación`,
+    });
+  });
+
+  it("acepta justo el límite de 2 horas", () => {
+    expect(validarFechaPartido("2026-08-03T20:00:00.000Z", ahora)).toEqual({ ok: true });
+  });
+
+  it("acepta una fecha bien futura", () => {
+    expect(validarFechaPartido("2026-08-10T20:00:00.000Z", ahora)).toEqual({ ok: true });
+  });
+
+  it("rechaza una fecha inválida", () => {
+    expect(validarFechaPartido("no-es-una-fecha", ahora)).toEqual({
+      ok: false,
+      error: "Fecha u hora inválida",
+    });
+  });
+});
+
+describe("validarResultado", () => {
+  it("acepta dos enteros no negativos", () => {
+    expect(validarResultado(6, 4)).toEqual({ ok: true, team1: 6, team2: 4 });
+    expect(validarResultado(0, 0)).toEqual({ ok: true, team1: 0, team2: 0 });
+  });
+
+  it("rechaza negativos", () => {
+    expect(validarResultado(-1, 2)).toEqual({ ok: false, error: "El resultado no puede ser negativo" });
+    expect(validarResultado(2, -1)).toEqual({ ok: false, error: "El resultado no puede ser negativo" });
+  });
+
+  it("rechaza no enteros y valores no numéricos", () => {
+    expect(validarResultado(1.5, 2)).toEqual({ ok: false, error: "El resultado debe ser un número entero" });
+    expect(validarResultado("6", 4)).toEqual({ ok: false, error: "El resultado debe ser un número entero" });
+    expect(validarResultado(NaN, 4)).toEqual({ ok: false, error: "El resultado debe ser un número entero" });
   });
 });
 

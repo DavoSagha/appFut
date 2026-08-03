@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { crearPartido } from "@/app/actions/partidos";
+import { validarFechaPartido } from "@/lib/validaciones";
 
 export default function NuevoPartidoPage() {
   const router = useRouter();
@@ -29,11 +30,18 @@ export default function NuevoPartidoPage() {
       return;
     }
 
+    const fechaHoraIso = new Date(`${fecha}T${hora}`).toISOString();
+    const validacionFecha = validarFechaPartido(fechaHoraIso);
+    if (!validacionFecha.ok) {
+      setError(validacionFecha.error);
+      return;
+    }
+
     setEnviando(true);
     setError("");
 
     const res = await crearPartido({
-      fechaHora: new Date(`${fecha}T${hora}`).toISOString(),
+      fechaHora: fechaHoraIso,
       cantidadJugadores,
       costoTotal: costo,
     });

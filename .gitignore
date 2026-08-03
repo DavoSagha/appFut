@@ -35,5 +35,10 @@ next-env.d.ts
 public/sw.js
 public/workbox-*.js
 
-#supabase
-/supabase
+# supabase
+# NO ignorar /supabase entero: migraciones y config.toml son el esquema de la
+# base y ya estaban versionados. Esa regla sólo tapaba las migraciones NUEVAS
+# (00017+), que es el caso peligroso: el repo parece completo pero no lo está.
+# El estado local (.branches, .temp, .env*) lo ignora supabase/.gitignore.
+/supabase/snippets
+/supabase/migrations/*.bak
