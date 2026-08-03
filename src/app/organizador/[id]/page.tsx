@@ -18,6 +18,7 @@ import {
 import { calcularMontoPorJugador, MENSAJE_MONTO_PENDIENTE } from "@/lib/monto";
 
 import BottomSheet from "@/components/BottomSheet";
+import EstadoBadge from "@/components/EstadoBadge";
 import PagoBadge from "@/components/PagoBadge";
 import PaymentReviewModal from "@/components/PaymentReviewModal";
 
@@ -372,10 +373,7 @@ export default function PartidoDetailPage() {
           <h1 className="text-xl font-bold text-[var(--primario)]">
             {new Date(partido.fecha_hora).toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })}
           </h1>
-          <span className={`text-sm font-medium px-2.5 py-1 rounded-full min-h-[28px] flex items-center ${
-            partido.estado === "abierto" ? "bg-[var(--primario)]/20 text-[var(--primario)]" :
-            partido.estado === "completo" ? "bg-blue-500/20 text-blue-400" : "bg-gray-500/20 text-gray-400"
-          }`}>{partido.estado}</span>
+          <EstadoBadge estado={partido.estado} />
         </div>
         <p className="text-[var(--texto)]/70 text-sm">
           {new Date(partido.fecha_hora).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit"})} · {maxPorEquipo} vs {maxPorEquipo} · ${partido.costo_total.toFixed(2)}

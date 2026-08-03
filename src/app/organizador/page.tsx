@@ -4,13 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import type { Partido, PartidoEstado } from "@/lib/db/types";
-
-const ETIQUETA_ESTADO: Record<PartidoEstado, string> = {
-  abierto: "Abierto",
-  completo: "Completo",
-  cerrado: "Cerrado",
-};
+import type { Partido } from "@/lib/db/types";
+import EstadoBadge from "@/components/EstadoBadge";
 
 export default function OrganizadorDashboard() {
   const router = useRouter();
@@ -130,17 +125,7 @@ export default function OrganizadorDashboard() {
                       · {porEquipo}vs{porEquipo}
                     </p>
                   </div>
-                  <span
-                    className={`text-sm font-medium px-2 py-1 rounded-full ${
-                      p.estado === "abierto"
-                        ? "bg-[var(--primario)]/20 text-[var(--primario)]"
-                        : p.estado === "completo"
-                        ? "bg-blue-500/20 text-blue-400"
-                        : "bg-[var(--inactivo)]/20 text-[var(--inactivo)]"
-                    }`}
-                  >
-                    {ETIQUETA_ESTADO[p.estado]}
-                  </span>
+                  <EstadoBadge estado={p.estado} />
                 </div>
               </Link>
             );
