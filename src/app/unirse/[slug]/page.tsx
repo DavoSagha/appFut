@@ -10,6 +10,7 @@ import {
 } from "@/app/actions/jugadores";
 import { asegurarSesion } from "@/lib/supabase/ensure-session";
 import { NOMBRE_MAX_LARGO } from "@/lib/constants";
+import { estadoEfectivo } from "@/lib/estado-partido";
 
 export default function UnirsePage() {
   const { slug } = useParams<{ slug: string }>();
@@ -50,7 +51,11 @@ export default function UnirsePage() {
         return;
       }
 
-      if (res.data.partido.estado === "cerrado") {
+      const estadoVisible = estadoEfectivo({
+        estado: res.data.partido.estado,
+        fecha_hora: res.data.partido.fechaHora,
+      });
+      if (estadoVisible === "cerrado") {
         setError("Este partido ya está cerrado");
       }
 
@@ -100,8 +105,13 @@ export default function UnirsePage() {
   }
 
   const { partido, anotados } = resumen;
-  const cerrado = partido.estado === "cerrado";
-  const completo = partido.estado === "completo";
+  // Vencido cuenta como cerrado: nadie se suma a un partido que ya se jugó.
+  const estadoVisible = estadoEfectivo({
+    estado: partido.estado,
+    fecha_hora: partido.fechaHora,
+  });
+  const cerrado = estadoVisible === "cerrado";
+  const completo = estadoVisible === "completo";
   const porEquipo = partido.cantidadJugadores / 2;
 
   return (

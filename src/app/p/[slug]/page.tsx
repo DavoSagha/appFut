@@ -17,6 +17,7 @@ import {
 import { asegurarSesion } from "@/lib/supabase/ensure-session";
 import { EMOJIS } from "@/lib/constants";
 import { montoDisponibleSegunEstado, MENSAJE_MONTO_PENDIENTE } from "@/lib/monto";
+import { estadoEfectivo } from "@/lib/estado-partido";
 import type { Equipo } from "@/lib/db/types";
 
 import BottomSheet from "@/components/BottomSheet";
@@ -186,7 +187,9 @@ export default function PlayerViewPage() {
         {/* Si todavía no sos titular no pagás nada (0 real, no "pendiente").
             Si ya sos titular pero el partido sigue armándose, el monto
             puede cambiar con cada alta: se oculta hasta que esté fijo. */}
-        {yo.equipo && !montoDisponibleSegunEstado(partido.estado) ? (
+        {yo.equipo && !montoDisponibleSegunEstado(
+          estadoEfectivo({ estado: partido.estado, fecha_hora: partido.fechaHora }),
+        ) ? (
           <p className="text-sm text-[var(--texto)]/50 mb-4">{MENSAJE_MONTO_PENDIENTE}</p>
         ) : (
           <p className="text-2xl font-bold text-[var(--primario)] mb-4">${yo.montoEsperado.toFixed(2)}</p>

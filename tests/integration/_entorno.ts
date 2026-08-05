@@ -133,6 +133,26 @@ export async function crearPartido(opts: {
   return { id: data.id as string, slug };
 }
 
+/**
+ * Retrodata un partido ya armado para que quede "jugado".
+ *
+ * Hace falta porque un partido vencido se comporta como cerrado (00022): si
+ * se crea directamente con fecha pasada, `unirse_o_reclamar` y el trigger de
+ * alta lo rechazan y no se puede poblar el plantel. El orden real es el de la
+ * vida: se crea a futuro, la gente se anota, y recién después pasa la hora.
+ *
+ * `validar_fecha_partido` (00019) deja pasar este UPDATE porque service_role
+ * no tiene JWT y auth.uid() es NULL.
+ */
+export async function marcarComoJugado(partidoId: string): Promise<void> {
+  const { error } = await admin()
+    .from("partidos")
+    .update({ fecha_hora: new Date(Date.now() - 86_400_000).toISOString() })
+    .eq("id", partidoId);
+
+  if (error) throw new Error(`No se pudo retrodatar el partido: ${error.message}`);
+}
+
 /** Un jugador nuevo que se anota en el partido. Devuelve su cliente y su ficha. */
 export async function anotarse(
   slug: string,

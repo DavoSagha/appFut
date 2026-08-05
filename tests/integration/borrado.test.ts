@@ -5,6 +5,7 @@ import { eliminarPartidoConResiduos, BUCKET_COMPROBANTES } from "@/lib/borrado";
 import {
   organizador,
   crearPartido,
+  marcarComoJugado,
   anotarse,
   leerFicha,
   leerPago,
@@ -95,14 +96,11 @@ describe("restricción temporal", () => {
 describe("no quedan residuos", () => {
   it("se van los jugadores y los pagos por cascade", async () => {
     const org = await organizador();
-    const { id, slug } = await crearPartido({
-      organizadorId: org.id,
-      cupo: 4,
-      jugado: true,
-    });
+    const { id, slug } = await crearPartido({ organizadorId: org.id, cupo: 4 });
 
     const a = await anotarse(slug, "Ana");
     const b = await anotarse(slug, "Beto");
+    await marcarComoJugado(id);
 
     expect(await leerFicha(a.fichaId)).not.toBeNull();
     expect(await leerPago(a.fichaId)).not.toBeNull();
@@ -127,14 +125,11 @@ describe("no quedan residuos", () => {
     // Sin esta limpieza quedan capturas de transferencias bancarias
     // huérfanas en el bucket, para siempre.
     const org = await organizador();
-    const { id, slug } = await crearPartido({
-      organizadorId: org.id,
-      cupo: 2,
-      jugado: true,
-    });
+    const { id, slug } = await crearPartido({ organizadorId: org.id, cupo: 2 });
 
     const jug = await anotarse(slug, "Con Comprobante");
     await subirComprobante(jug.cliente, id, jug.fichaId);
+    await marcarComoJugado(id);
 
     expect(await archivosDe(id, jug.fichaId)).toHaveLength(1);
 
@@ -148,11 +143,7 @@ describe("no quedan residuos", () => {
     // Si el upload salió bien pero el UPDATE de la fila falló, el archivo
     // no está referenciado por nadie. El barrido del bucket lo agarra igual.
     const org = await organizador();
-    const { id, slug } = await crearPartido({
-      organizadorId: org.id,
-      cupo: 2,
-      jugado: true,
-    });
+    const { id, slug } = await crearPartido({ organizadorId: org.id, cupo: 2 });
 
     const jug = await anotarse(slug, "Huerfano");
     const ruta = `${id}/${jug.fichaId}/comprobante.jpg`;
@@ -167,6 +158,7 @@ describe("no quedan residuos", () => {
     expect((await leerPago(jug.fichaId))?.comprobante_url).toBeNull();
     expect(await archivosDe(id, jug.fichaId)).toHaveLength(1);
 
+    await marcarComoJugado(id);
     const res = await eliminarPartidoConResiduos(org.cliente, id);
     expect(res.ok).toBe(true);
 
@@ -191,12 +183,9 @@ describe("quién puede borrar", () => {
 
   it("un jugador no puede borrar el partido", async () => {
     const org = await organizador();
-    const { id, slug } = await crearPartido({
-      organizadorId: org.id,
-      cupo: 2,
-      jugado: true,
-    });
+    const { id, slug } = await crearPartido({ organizadorId: org.id, cupo: 2 });
     const jug = await anotarse(slug, "Nadie");
+    await marcarComoJugado(id);
 
     const res = await eliminarPartidoConResiduos(jug.cliente, id);
 
@@ -206,16 +195,13 @@ describe("quién puede borrar", () => {
 
   it("un jugador tampoco puede borrar los comprobantes de un partido ajeno", async () => {
     const org = await organizador();
-    const { id, slug } = await crearPartido({
-      organizadorId: org.id,
-      cupo: 4,
-      jugado: true,
-    });
+    const { id, slug } = await crearPartido({ organizadorId: org.id, cupo: 4 });
 
     const victima = await anotarse(slug, "Victima");
     const ruta = await subirComprobante(victima.cliente, id, victima.fichaId);
 
     const atacante = await anotarse(slug, "Atacante");
+    await marcarComoJugado(id);
     await atacante.cliente.storage.from(BUCKET_COMPROBANTES).remove([ruta]);
 
     expect(await archivosDe(id, victima.fichaId)).toHaveLength(1);

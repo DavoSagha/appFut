@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import type { Partido } from "@/lib/db/types";
+import { estadoEfectivo } from "@/lib/estado-partido";
 import EstadoBadge from "@/components/EstadoBadge";
 
 export default function OrganizadorDashboard() {
@@ -125,7 +126,9 @@ export default function OrganizadorDashboard() {
                       · {porEquipo}vs{porEquipo}
                     </p>
                   </div>
-                  <EstadoBadge estado={p.estado} />
+                  {/* Estado derivado, no el guardado: un partido cuya
+                      fecha_hora ya pasó se muestra Cerrado solo. */}
+                  <EstadoBadge estado={estadoEfectivo(p)} />
                 </div>
               </Link>
             );

@@ -16,6 +16,7 @@ import {
   type EquipoDraft,
 } from "@/lib/equipos-draft";
 import { calcularMontoPorJugador, MENSAJE_MONTO_PENDIENTE } from "@/lib/monto";
+import { estadoEfectivo, partidoVencido } from "@/lib/estado-partido";
 
 import BottomSheet from "@/components/BottomSheet";
 import EstadoBadge from "@/components/EstadoBadge";
@@ -353,10 +354,14 @@ export default function PartidoDetailPage() {
   const pendientes = jugadores.filter((j) => j.pago?.estado === "pendiente_confirmacion");
   // La reserva no reparte el costo: el divisor es Team1+Team2, nunca todos
   // los anotados. Y no se muestra nada hasta que el plantel esté completo.
+  // Un partido cuya fecha_hora ya pasó se comporta como cerrado. El estado
+  // guardado sigue siendo la intención del organizador; esto es la derivación.
+  const vencido = partidoVencido(partido.fecha_hora);
+  const estadoVisible = estadoEfectivo(partido);
   const infoMonto = calcularMontoPorJugador(
     partido.costo_total,
     team1.length + team2.length,
-    partido.estado,
+    estadoVisible,
   );
   const totalRecaudado = confirmados.reduce((acc, j) => acc + (j.pago?.monto_pagado ?? j.pago?.monto_esperado ?? 0), 0);
   const maxPorEquipo = Math.ceil(partido.cantidad_jugadores / 2);
@@ -373,7 +378,7 @@ export default function PartidoDetailPage() {
           <h1 className="text-xl font-bold text-[var(--primario)]">
             {new Date(partido.fecha_hora).toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })}
           </h1>
-          <EstadoBadge estado={partido.estado} />
+          <EstadoBadge estado={estadoVisible} />
         </div>
         <p className="text-[var(--texto)]/70 text-sm">
           {new Date(partido.fecha_hora).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit"})} · {maxPorEquipo} vs {maxPorEquipo} · ${partido.costo_total.toFixed(2)}
@@ -396,34 +401,20 @@ export default function PartidoDetailPage() {
           className="bg-[var(--primario)] text-[var(--fondo)] font-semibold px-5 min-h-[44px] rounded-xl hover:brightness-110 transition-all disabled:opacity-50 text-sm whitespace-nowrap">Agregar</button>
       </form>
 
+      {/* Un partido vencido ya no se cierra ni se reabre a mano: el cierre lo
+          dicta la fecha_hora. Reabrirlo no cambiaría nada (seguiría vencido),
+          así que en vez de un botón muerto se explica por qué está cerrado. */}
       <div className="flex gap-2 mb-6">
-        {partido.estado !== "cerrado" ? (
+        {vencido ? (
+          <p className="flex-1 bg-[var(--superficie)] text-[var(--texto)]/60 min-h-[44px] rounded-xl text-sm flex items-center justify-center text-center px-3">
+            Cerrado automáticamente: ya pasó la fecha y hora del partido
+          </p>
+        ) : partido.estado !== "cerrado" ? (
           <button onClick={() => ejecutar(() => cerrarPartido(id))} disabled={guardandoEquipos} className="flex-1 bg-red-500/10 text-red-400 min-h-[44px] rounded-xl text-sm hover:bg-red-500/20 transition-colors disabled:opacity-50">Cerrar partido</button>
         ) : (
           <button onClick={() => ejecutar(() => reabrirPartido(id))} disabled={guardandoEquipos} className="flex-1 bg-[var(--primario)]/10 text-[var(--primario)] min-h-[44px] rounded-xl text-sm hover:brightness-110 transition-colors disabled:opacity-50">Reabrir partido</button>
         )}
       </div>
-
-      {cambiosEquipo.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 mb-6">
-          <button
-            type="button"
-            onClick={handleDescartarEquipos}
-            disabled={guardandoEquipos}
-            className="min-h-[44px] rounded-xl bg-[var(--superficie)] text-[var(--texto)]/70 text-sm font-medium hover:brightness-110 transition-all disabled:opacity-50"
-          >
-            Descartar cambios
-          </button>
-          <button
-            type="button"
-            onClick={handleConfirmarEquipos}
-            disabled={guardandoEquipos}
-            className="min-h-[44px] rounded-xl bg-[var(--primario)] text-[var(--fondo)] text-sm font-semibold hover:brightness-110 transition-all disabled:opacity-50"
-          >
-            {guardandoEquipos ? "Guardando..." : `Confirmar cambios (${cambiosEquipo.length})`}
-          </button>
-        </div>
-      )}
 
       {/* Payment summary */}
       <div className="bg-[var(--superficie)] rounded-xl p-4 mb-6">
@@ -475,6 +466,29 @@ export default function PartidoDetailPage() {
           </button>
         </form>
       </div>
+
+      {/* Confirmar/descartar el draft de equipos: va pegado a los paneles de
+          Team 1 / Team 2 que edita, no arriba del resumen de pagos. */}
+      {cambiosEquipo.length > 0 && (
+        <div className="grid grid-cols-2 gap-2 mb-6">
+          <button
+            type="button"
+            onClick={handleDescartarEquipos}
+            disabled={guardandoEquipos}
+            className="min-h-[44px] rounded-xl bg-[var(--superficie)] text-[var(--texto)]/70 text-sm font-medium hover:brightness-110 transition-all disabled:opacity-50"
+          >
+            Descartar cambios
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirmarEquipos}
+            disabled={guardandoEquipos}
+            className="min-h-[44px] rounded-xl bg-[var(--primario)] text-[var(--fondo)] text-sm font-semibold hover:brightness-110 transition-all disabled:opacity-50"
+          >
+            {guardandoEquipos ? "Guardando..." : `Confirmar cambios (${cambiosEquipo.length})`}
+          </button>
+        </div>
+      )}
 
       {/* Teams grid: una columna en mobile (si no, el panel queda tan angosto
           que el nombre se aprieta a cero antes que el badge de pago), dos
