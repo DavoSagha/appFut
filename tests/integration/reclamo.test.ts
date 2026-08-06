@@ -4,8 +4,8 @@ import {
   organizador,
   crearPartido,
   anotarse,
-  jugador,
   leerFicha,
+  leerPago,
   admin,
 } from "./_entorno";
 
@@ -162,31 +162,128 @@ describe("validaciones de entrada", () => {
   });
 });
 
-describe("comportamiento actual con pago confirmado", () => {
-  it("BLOQUEA el reclamo si el pago ya está confirmado", async () => {
-    // Este test documenta lo que hace HOY 00014_fix_ambiguo.sql.
-    // Ojo: contradice el pedido de "poner el nombre y entrar, siempre".
-    // Si se decide que el reclamo sea incondicional, este test tiene que
-    // cambiar junto con la migración — no borrarse en silencio.
-    const { slug } = await crearPartido({ organizadorId: orgId, costo: 500 });
-    const j = await anotarse(slug, "Pagó");
+/**
+ * 00023 invirtió la regla que traía 00013: el pago confirmado ya NO bloquea
+ * el reclamo. El estado de pago es información administrativa, no una
+ * credencial de acceso. Estos tests reemplazan al que documentaba el bloqueo.
+ */
+describe("el pago confirmado NO bloquea el acceso", () => {
+  /** Deja la ficha con el pago en 'confirmado', como si el organizador lo hubiera marcado. */
+  async function conPagoConfirmado(slug: string, nombre: string) {
+    const j = await anotarse(slug, nombre);
 
     await admin()
       .from("pagos")
-      .update({ estado: "pendiente_confirmacion" })
+      .update({
+        estado: "pendiente_confirmacion",
+        comprobante_url: `ruta/${j.fichaId}/comprobante.jpg`,
+      })
       .eq("jugador_id", j.fichaId);
     await admin()
       .from("pagos")
       .update({ estado: "confirmado", confirmado_por: orgId })
       .eq("jugador_id", j.fichaId);
 
-    const otro = await jugador();
-    const { error } = await otro.rpc("unirse_o_reclamar", {
-      p_slug: slug,
-      p_nombre: "Pagó",
-    });
+    return j;
+  }
 
-    expect(error).toBeTruthy();
-    expect(error?.message).toMatch(/confirmado/i);
+  it("PERDÍ LA SESIÓN CON EL PAGO YA CONFIRMADO: vuelvo y recupero mi ficha", async () => {
+    const { slug } = await crearPartido({ organizadorId: orgId, costo: 500 });
+    const original = await conPagoConfirmado(slug, "Davo");
+
+    const vuelta = await anotarse(slug, "Davo");
+
+    expect(vuelta.accion).toBe("reclamada");
+    expect(vuelta.fichaId).toBe(original.fichaId);
+  });
+
+  it("el pago sigue confirmado después del reclamo", async () => {
+    const { slug } = await crearPartido({ organizadorId: orgId, costo: 500 });
+    const original = await conPagoConfirmado(slug, "Davo");
+
+    await anotarse(slug, "Davo");
+
+    const pago = await leerPago(original.fichaId);
+    expect(pago?.estado).toBe("confirmado");
+  });
+
+  it("no pierde el monto pagado ni el comprobante", async () => {
+    const { slug } = await crearPartido({ organizadorId: orgId, costo: 500 });
+    const original = await conPagoConfirmado(slug, "Davo");
+    const antes = await leerPago(original.fichaId);
+
+    await anotarse(slug, "Davo");
+
+    const despues = await leerPago(original.fichaId);
+    expect(despues?.monto_pagado).toBe(antes?.monto_pagado);
+    expect(despues?.monto_esperado).toBe(antes?.monto_esperado);
+    expect(despues?.comprobante_url).toBe(antes?.comprobante_url);
+  });
+
+  it("no duplica la ficha: sigue habiendo un solo jugador", async () => {
+    const { id, slug } = await crearPartido({ organizadorId: orgId, costo: 500 });
+    await conPagoConfirmado(slug, "Davo");
+
+    await anotarse(slug, "Davo");
+    await anotarse(slug, "Davo");
+
+    const { count } = await admin()
+      .from("jugadores")
+      .select("id", { count: "exact", head: true })
+      .eq("partido_id", id);
+
+    expect(count).toBe(1);
+  });
+
+  it("conserva rol, equipo y nombre de la ficha reclamada", async () => {
+    const { slug } = await crearPartido({ organizadorId: orgId, costo: 500 });
+    const original = await conPagoConfirmado(slug, "Davo");
+    const antes = await leerFicha(original.fichaId);
+
+    await anotarse(slug, "Davo");
+
+    const despues = await leerFicha(original.fichaId);
+    expect(despues?.nombre).toBe(antes?.nombre);
+    expect(despues?.rol).toBe(antes?.rol);
+    expect(despues?.equipo).toBe(antes?.equipo);
+  });
+
+  it("la ficha queda con UN solo dueño: el último reclamante", async () => {
+    // "Dos personas no pueden ocupar la misma ficha a la vez": user_id es
+    // una sola columna y el reclamo corre bajo advisory lock, así que el
+    // traspaso es atómico y el dueño anterior queda desalojado, no duplicado.
+    const { slug } = await crearPartido({ organizadorId: orgId, costo: 500 });
+    const original = await conPagoConfirmado(slug, "Davo");
+    const dueñoViejo = (await leerFicha(original.fichaId))?.user_id;
+
+    await anotarse(slug, "Davo");
+
+    const ficha = await leerFicha(original.fichaId);
+    expect(ficha?.user_id).toBeTruthy();
+    expect(ficha?.user_id).not.toBe(dueñoViejo);
+
+    const { data } = await admin()
+      .from("jugadores")
+      .select("user_id_anterior, reclamado_at")
+      .eq("id", original.fichaId)
+      .single();
+
+    expect(data?.user_id_anterior).toBe(dueñoViejo);
+    expect(data?.reclamado_at).toBeTruthy();
+  });
+
+  it("el dueño anterior pierde el acceso a la ficha", async () => {
+    const { slug } = await crearPartido({ organizadorId: orgId, costo: 500 });
+    const original = await conPagoConfirmado(slug, "Davo");
+
+    await anotarse(slug, "Davo");
+
+    // El cliente viejo ya no ve la ficha: RLS la resuelve por user_id.
+    const { data } = await original.cliente
+      .from("jugadores")
+      .select("id")
+      .eq("id", original.fichaId);
+
+    expect(data ?? []).toHaveLength(0);
   });
 });

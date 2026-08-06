@@ -93,11 +93,30 @@ Los más importantes:
 
 ## Nota sobre el reclamo por nombre
 
-`reclamo.test.ts` tiene un test llamado
-`BLOQUEA el reclamo si el pago ya está confirmado`.
+**Decidido en `00023_pago_no_bloquea_acceso.sql`: el reclamo es incondicional.**
+Escribís el nombre y entrás, siempre. El test que documentaba el bloqueo
+(`BLOQUEA el reclamo si el pago ya está confirmado`) fue reemplazado por el
+describe `el pago confirmado NO bloquea el acceso` en `reclamo.test.ts`.
 
-Documenta el comportamiento actual de `00014_fix_ambiguo.sql`. Si se decide
-que el reclamo sea incondicional (escribir el nombre y entrar siempre), ese
-test tiene que cambiar **junto con** la migración. No borrarlo en silencio:
-el cambio implica que cualquiera con el link puede quedarse con la ficha de
-otro, pago confirmado incluido.
+El motivo del cambio: `unirse_o_reclamar` usaba `pagos.estado` como si fuera
+una credencial de autenticación. Son tres conceptos distintos y hay que
+mantenerlos separados:
+
+| Concepto | Columna | Pregunta que responde |
+| --- | --- | --- |
+| jugador anotado | `jugadores.id` | ¿existe la ficha? |
+| sesión / acceso | `jugadores.user_id` | ¿quién es el dueño hoy? |
+| estado de pago | `pagos.estado` | ¿debe plata? |
+
+El efecto perverso del bloqueo era que el único jugador que no podía volver
+a entrar era, justamente, el que ya había pagado.
+
+**La contrapartida, asumida a propósito:** el reclamo por nombre nunca
+autenticó a nadie. Cualquiera con el link puede escribir "Davo" y quedarse
+con la ficha de Davo — eso ya era cierto para toda ficha sin pago confirmado,
+y ahora también para las pagadas. El link es la credencial del grupo, y
+`user_id_anterior` + `reclamado_at` dejan el rastro de auditoría.
+
+Si algún día hace falta más que eso, la respuesta es un PIN por ficha. **No**
+volver a poner el estado de pago de candado: eso es lo que este cambio
+deshizo.
