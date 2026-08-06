@@ -30,6 +30,10 @@ async function guardarEquipos(
 }
 
 describe("equipos y roles", () => {
+  // REGLA DE PAGO ÚNICA (00027): reparten los titulares; la reserva paga 0.
+  // 00015_equipos había metido "pagan todos" sólo en el INSERT, pero las tres
+  // funciones de 00017_equipos_batch lo pisaban en cuanto se tocaban equipos.
+  // 00027 alineó el INSERT con el resto en vez de dejar dos reglas conviviendo.
   it("un alta nueva sin equipo entra a Reserva como suplente y no paga", async () => {
     const { id, slug } = await crearPartido({
       organizadorId: org.id,
@@ -42,6 +46,55 @@ describe("equipos y roles", () => {
     expect(await leerFicha(fichaId)).toMatchObject({ rol: "suplente", equipo: null });
     expect(Number((await leerPago(fichaId))?.monto_esperado)).toBe(0);
     expect((await leerPartido(id))?.estado).toBe("abierto");
+  });
+
+  it("la reserva no paga: el divisor son los titulares, no los anotados", async () => {
+    // El test que fija la regla contra la que 00015_equipos discrepaba.
+    // Si alguien vuelve a meter "pagan todos" en un solo camino, esto se rompe.
+    const { id, slug } = await crearPartido({
+      organizadorId: org.id,
+      cupo: 4,
+      costo: 1200,
+    });
+    const t1 = await anotarse(slug, "Titular Uno");
+    const t2 = await anotarse(slug, "Titular Dos");
+    const reserva = await anotarse(slug, "La Reserva");
+
+    await guardarEquipos(id, [
+      { jugador_id: t1.fichaId, equipo: "team1" },
+      { jugador_id: t2.fichaId, equipo: "team2" },
+    ]);
+
+    expect(await leerFicha(reserva.fichaId)).toMatchObject({
+      rol: "suplente",
+      equipo: null,
+    });
+
+    // 2 titulares reparten $1200 -> $600 cada uno. La reserva no juega, no paga.
+    expect(Number((await leerPago(t1.fichaId))?.monto_esperado)).toBe(600);
+    expect(Number((await leerPago(t2.fichaId))?.monto_esperado)).toBe(600);
+    expect(Number((await leerPago(reserva.fichaId))?.monto_esperado)).toBe(0);
+  });
+
+  it("el alta de un suplente NO recalcula lo que ya reparten los titulares", async () => {
+    // Con "pagan todos" cada nuevo anotado abarataba a los demás. Con la regla
+    // vigente, sumar gente a la Reserva no le cambia el monto a nadie.
+    const { id, slug } = await crearPartido({
+      organizadorId: org.id,
+      cupo: 4,
+      costo: 1200,
+    });
+    const t1 = await anotarse(slug, "Juega Uno");
+    const t2 = await anotarse(slug, "Juega Dos");
+    await guardarEquipos(id, [
+      { jugador_id: t1.fichaId, equipo: "team1" },
+      { jugador_id: t2.fichaId, equipo: "team2" },
+    ]);
+
+    await anotarse(slug, "Mira De Afuera");
+
+    expect(Number((await leerPago(t1.fichaId))?.monto_esperado)).toBe(600);
+    expect(Number((await leerPago(t2.fichaId))?.monto_esperado)).toBe(600);
   });
 
   it("confirma los equipos de forma atómica y recién entonces completa", async () => {
