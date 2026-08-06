@@ -106,6 +106,24 @@ export default function PaymentReviewModal({
         )}
 
         {estado === "pendiente_confirmacion" && (
+          <p className="text-center text-sm text-[var(--texto)]/50 bg-amber-400/10 rounded-xl px-3 py-2">
+            El jugador declaró su pago. Revisá y confirmá.
+          </p>
+        )}
+
+        {estado === "sin_declarar" && (
+          <p className="text-center text-sm text-[var(--texto)]/50 bg-[var(--fondo)] rounded-xl px-3 py-2">
+            Este jugador no declaró su pago. Si ya pagó en efectivo, podés confirmarlo igual.
+          </p>
+        )}
+
+        {estado === "rechazado" && (
+          <p className="text-center text-sm text-[var(--texto)]/50 bg-red-500/10 rounded-xl px-3 py-2">
+            Este pago fue rechazado antes. Podés confirmarlo si ya recibiste el dinero.
+          </p>
+        )}
+
+        {estado !== "confirmado" && (
           <div className="flex flex-col gap-3 pt-2">
             <button
               onClick={handleConfirmar}
@@ -137,14 +155,6 @@ export default function PaymentReviewModal({
               {revirtiendo ? "Revirtiendo..." : "↩️ Marcar como sin pagar"}
             </button>
           </div>
-        )}
-
-        {estado !== "pendiente_confirmacion" && estado !== "confirmado" && (
-          <p className="text-center text-sm text-[var(--texto)]/40 pt-2">
-            {estado === "rechazado"
-              ? "Este pago fue rechazado"
-              : "Este jugador aún no declaró su pago"}
-          </p>
         )}
       </div>
     </BottomSheet>

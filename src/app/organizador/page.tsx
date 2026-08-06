@@ -109,8 +109,8 @@ export default function OrganizadorDashboard() {
                 href={`/organizador/${p.id}`}
                 className="block bg-[var(--superficie)] rounded-xl p-4 hover:brightness-110 transition-all"
               >
-                <div className="flex items-center justify-between">
-                  <div>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
                     <p className="font-semibold text-[var(--texto)]">
                       {new Date(p.fecha_hora).toLocaleDateString("es-AR", {
                         weekday: "long",
@@ -126,9 +126,16 @@ export default function OrganizadorDashboard() {
                       · {porEquipo}vs{porEquipo}
                     </p>
                   </div>
-                  {/* Estado derivado, no el guardado: un partido cuya
-                      fecha_hora ya pasó se muestra Cerrado solo. */}
-                  <EstadoBadge estado={estadoEfectivo(p)} />
+                  <div className="flex flex-col items-end shrink-0">
+                    {p.resultado_team1 != null && p.resultado_team2 != null && (
+                      <p className="text-xl font-bold text-[var(--primario)] mb-1">
+                        {p.resultado_team1} - {p.resultado_team2}
+                      </p>
+                    )}
+                    {/* Estado derivado, no el guardado: un partido cuya
+                        fecha_hora ya pasó se muestra Cerrado solo. */}
+                    <EstadoBadge estado={estadoEfectivo(p)} />
+                  </div>
                 </div>
               </Link>
             );

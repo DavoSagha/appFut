@@ -589,10 +589,10 @@ function PlayerRow({ jugador, onAccion, onPago }: {
   onPago: (j: JugadorConPago) => void;
 }) {
   const estado = jugador.pago?.estado ?? "sin_declarar";
-  // Pendiente: para confirmar/rechazar. Confirmado: para poder revertirlo
-  // si se marcó como pagado por error. Sin declarar/rechazado no tienen
-  // ninguna acción del organizador desde acá.
-  const abrePago = estado === "pendiente_confirmacion" || estado === "confirmado";
+  // Siempre se puede abrir el modal de pago: para confirmar/rechazar un
+  // pendiente, para confirmar aunque el jugador no haya declarado su pago,
+  // o para revertir un confirmado que fue un error.
+  const abrePago = true;
 
   return (
     <div className="flex items-center gap-2 bg-[var(--fondo)] rounded-lg px-3 min-h-[44px]">

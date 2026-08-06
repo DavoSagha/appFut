@@ -166,16 +166,17 @@ export async function confirmarPago(jugadorId: string) {
   const supabase = await createClient();
 
   // El trigger verifica que confirmado_por sea el organizador del partido.
+  // Sin filtro de estado: el organizador puede confirmar aunque el jugador
+  // no haya declarado su pago (pagó en efectivo y se le olvidó, por ejemplo).
   const { data, error } = await supabase
     .from("pagos")
     .update({ estado: "confirmado", confirmado_por: userId })
     .eq("jugador_id", jugadorId)
-    .eq("estado", "pendiente_confirmacion")
     .select("id");
 
   if (error) return falloDe("confirmarPago", error);
   if (!data || data.length === 0) {
-    return fallo("El pago ya no está pendiente de confirmación");
+    return fallo("No se encontró el pago de este jugador");
   }
 
   revalidatePath("/organizador");
